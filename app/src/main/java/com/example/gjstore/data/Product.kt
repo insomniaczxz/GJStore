@@ -1,0 +1,31 @@
+package com.example.gjstore.data
+
+data class Product(
+    val id: String = "",
+    val name: String = "",
+    val brand: String = "",
+    val category: String = "",
+    val unit: String = "",
+    val size: Double = 0.0,
+    val cost: Double = 0.0,
+    val lastBoughtStore: String = "",
+    val markupType: String = "", // "Percentage" or "Fixed"
+    val markupValue: Double = 0.0,
+    var price: Double = 0.0,
+    val stock: Int = 0,
+    val threshold: Int = 0,
+    val date: String = ""
+) {
+    val formattedSize: String
+        get() = if (size % 1.0 == 0.0) size.toInt().toString() else size.toString()
+
+    init {
+        val rawPrice = if (markupType.equals("Percentage", ignoreCase = true)) {
+            cost * (1 + (markupValue / 100))
+        } else {
+            cost + markupValue
+        }
+        // Roundup both percentage and fixed markup
+        price = kotlin.math.ceil(rawPrice)
+    }
+}
