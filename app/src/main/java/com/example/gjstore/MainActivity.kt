@@ -63,6 +63,11 @@ import java.io.FileWriter
 import kotlinx.coroutines.launch
 import android.content.ContentValues
 import android.provider.MediaStore
+import android.content.Intent
+import androidx.core.content.FileProvider
+import java.net.HttpURLConnection
+import java.net.URL
+import androidx.compose.material.icons.filled.SystemUpdate
 import android.os.Build
 import java.io.OutputStream
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -1128,14 +1133,62 @@ fun DropdownSettingsManager(settings: DropdownSettings) {
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        ScrollableTabRow(selectedTabIndex = subTabState, edgePadding = 0.dp) {
-            sections.forEachIndexed { index, title ->
-                Tab(selected = subTabState == index, onClick = {
-                    subTabState = index
-                    entryInputText = ""
-                    editingIndex = -1
-                    oldValueForUpdate = ""
-                }, text = { Text(title) })
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+        ) {
+            ScrollableTabRow(
+                selectedTabIndex = subTabState,
+                edgePadding = 0.dp,
+                modifier = Modifier.weight(1f)
+            ) {
+                sections.forEachIndexed { index, title ->
+                    Tab(selected = subTabState == index, onClick = {
+                        subTabState = index
+                        entryInputText = ""
+                        editingIndex = -1
+                        oldValueForUpdate = ""
+                    }, text = { Text(title) })
+                }
+            }
+            
+            IconButton(onClick = {
+                coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    try {
+                        val apkUrl = "https://raw.githubusercontent.com/insomniaczxz/GJStore/main/app/build/outputs/apk/debug/app-debug.apk"
+                        val connection = URL(apkUrl).openConnection() as HttpURLConnection
+                        connection.connect()
+                        
+                        if (connection.responseCode == 200) {
+                            val apkFile = File(context.cacheDir, "update.apk")
+                            connection.inputStream.use { input ->
+                                apkFile.outputStream().use { output ->
+                                    input.copyTo(output)
+                                }
+                            }
+                            
+                            val contentUri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
+                            val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                setDataAndType(contentUri, "application/vnd.android.package-archive")
+                            }
+                            context.startActivity(installIntent)
+                        } else {
+                            coroutineScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                                Toast.makeText(context, "Update not found on GitHub.", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        coroutineScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                            Toast.makeText(context, "Failed to download update.", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }) {
+                Icon(Icons.Default.SystemUpdate, contentDescription = "Update App", tint = Color(0xFFFF7D1E))
             }
         }
 
