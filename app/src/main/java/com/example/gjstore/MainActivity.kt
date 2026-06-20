@@ -16,7 +16,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -497,7 +502,32 @@ fun DropdownSettingsManager(settings: DropdownSettings, onAction: (String, Strin
 }
 
 fun updateApp(context: Context, scope: CoroutineScope) {
-    scope.launch(Dispatchers.IO) { try { val url = URL("https://raw.githubusercontent.com/insomniaczxz/GJStore/main/release/app-debug.apk"); val conn = url.openConnection() as HttpURLConnection; if (conn.responseCode == 200) { val file = File(context.cacheDir, "update.apk"); conn.inputStream.use { i -> file.outputStream().use { o -> i.copyTo(o) } }; val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file); context.startActivity(Intent(Intent.ACTION_VIEW).apply { setDataAndType(uri, "application/vnd.android.package-archive"); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK) }) } } catch (e: Exception) { withContext(Dispatchers.Main) { Toast.makeText(context, "Failed", Toast.LENGTH_SHORT).show() } } }
+    scope.launch(Dispatchers.IO) {
+        try {
+            val url = URL("https://raw.githubusercontent.com/insomniaczxz/GJStore/main/release/app-debug.apk")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.connectTimeout = 10000
+            conn.readTimeout = 30000
+            if (conn.responseCode == 200) {
+                val file = File(context.cacheDir, "update.apk")
+                conn.inputStream.use { input ->
+                    file.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, "application/vnd.android.package-archive")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+            } else {
+                withContext(Dispatchers.Main) { Toast.makeText(context, "Update not found", Toast.LENGTH_SHORT).show() }
+            }
+        } catch (e: Exception) { 
+            withContext(Dispatchers.Main) { Toast.makeText(context, "Update Failed: ${e.message}", Toast.LENGTH_SHORT).show() } 
+        }
+    }
 }
 
 @Composable
