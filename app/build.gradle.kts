@@ -33,6 +33,16 @@ android {
     }
 }
 
+// Automatically copy the APK to the root 'release' folder after build
+tasks.register<Copy>("copyApkToRelease") {
+    from(layout.buildDirectory.file("outputs/apk/debug/app-debug.apk"))
+    into(layout.projectDirectory.dir("../release"))
+}
+
+tasks.matching { it.name == "assembleDebug" }.configureEach {
+    finalizedBy("copyApkToRelease")
+}
+
 dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.core.ktx)

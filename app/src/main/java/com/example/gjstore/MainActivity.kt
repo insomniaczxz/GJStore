@@ -1176,9 +1176,10 @@ fun DropdownSettingsManager(settings: DropdownSettings) {
                             
                             val contentUri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
                             val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(contentUri, "application/vnd.android.package-archive")
                                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                setDataAndType(contentUri, "application/vnd.android.package-archive")
+                                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
                             }
                             context.startActivity(installIntent)
                         } else {
