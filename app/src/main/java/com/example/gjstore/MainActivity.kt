@@ -63,6 +63,11 @@ import java.io.FileWriter
 import kotlinx.coroutines.launch
 import android.content.ContentValues
 import android.provider.MediaStore
+import android.content.Intent
+import androidx.core.content.FileProvider
+import java.net.HttpURLConnection
+import java.net.URL
+import androidx.compose.material.icons.filled.SystemUpdate
 import android.os.Build
 import java.io.OutputStream
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -178,6 +183,7 @@ fun MainAppScreen() {
                 dynamicSettings.categories.clear()
                 dynamicSettings.units.clear()
                 dynamicSettings.stores.clear()
+                dynamicSettings.messengerKeys.clear()
 
                 if (dataGrid.size > 1) {
                     for (rowIndex in 1 until dataGrid.size) {
@@ -193,6 +199,9 @@ fun MainAppScreen() {
                         }
                         if (rowValues.size > 3 && rowValues[3].isNotBlank()) {
                             dynamicSettings.stores.add(rowValues[3].trim())
+                        }
+                        if (rowValues.size > 4 && rowValues[4].isNotBlank()) {
+                            dynamicSettings.messengerKeys.add(rowValues[4].trim())
                         }
                     }
                 }
@@ -1110,7 +1119,7 @@ fun AdminEventsScreen(events: List<com.example.gjstore.data.Event>, isLoading: B
 @Composable
 fun DropdownSettingsManager(settings: DropdownSettings) {
     var subTabState by remember { mutableStateOf(0) }
-    val sections = listOf("Brands", "Categories", "Units", "Stores")
+    val sections = listOf("Brands", "Categories", "Units", "Stores", "Messenger Keys")
 
     var entryInputText by remember { mutableStateOf("") }
     var editingIndex by remember { mutableStateOf(-1) }
@@ -1124,18 +1133,67 @@ fun DropdownSettingsManager(settings: DropdownSettings) {
         0 -> settings.brands
         1 -> settings.categories
         2 -> settings.units
-        else -> settings.stores
+        3 -> settings.stores
+        else -> settings.messengerKeys
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        ScrollableTabRow(selectedTabIndex = subTabState, edgePadding = 0.dp) {
-            sections.forEachIndexed { index, title ->
-                Tab(selected = subTabState == index, onClick = {
-                    subTabState = index
-                    entryInputText = ""
-                    editingIndex = -1
-                    oldValueForUpdate = ""
-                }, text = { Text(title) })
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+        ) {
+            ScrollableTabRow(
+                selectedTabIndex = subTabState,
+                edgePadding = 0.dp,
+                modifier = Modifier.weight(1f)
+            ) {
+                sections.forEachIndexed { index, title ->
+                    Tab(selected = subTabState == index, onClick = {
+                        subTabState = index
+                        entryInputText = ""
+                        editingIndex = -1
+                        oldValueForUpdate = ""
+                    }, text = { Text(title) })
+                }
+            }
+            
+            IconButton(onClick = {
+                coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    try {
+                        val apkUrl = "https://raw.githubusercontent.com/insomniaczxz/GJStore/main/app/build/outputs/apk/debug/app-debug.apk"
+                        val connection = URL(apkUrl).openConnection() as HttpURLConnection
+                        connection.connect()
+                        
+                        if (connection.responseCode == 200) {
+                            val apkFile = File(context.cacheDir, "update.apk")
+                            connection.inputStream.use { input ->
+                                apkFile.outputStream().use { output ->
+                                    input.copyTo(output)
+                                }
+                            }
+                            
+                            val contentUri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
+                            val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                setDataAndType(contentUri, "application/vnd.android.package-archive")
+                            }
+                            context.startActivity(installIntent)
+                        } else {
+                            coroutineScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                                Toast.makeText(context, "Update not found on GitHub.", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        coroutineScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                            Toast.makeText(context, "Failed to download update.", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }) {
+                Icon(Icons.Default.SystemUpdate, contentDescription = "Update App", tint = Color(0xFFFF7D1E))
             }
         }
 
@@ -1158,10 +1216,10 @@ fun DropdownSettingsManager(settings: DropdownSettings) {
                             try {
                                 Toast.makeText(context, "Syncing with server...", Toast.LENGTH_SHORT).show()
 
-                                val syncPayload = mutableListOf("", "", "", "")
+                                val syncPayload = mutableListOf("", "", "", "", "")
                                 syncPayload[subTabState] = targetedValue
 
-                                val oldPayload = mutableListOf("", "", "", "")
+                                val oldPayload = mutableListOf("", "", "", "", "")
                                 oldPayload[subTabState] = oldValueForUpdate
 
                                 val requestBody = mutableMapOf<String, Any>(
@@ -1240,7 +1298,7 @@ fun DropdownSettingsManager(settings: DropdownSettings) {
                                     try {
                                         Toast.makeText(context, "Removing...", Toast.LENGTH_SHORT).show()
 
-                                        val deletePayload = mutableListOf("", "", "", "")
+                                        val deletePayload = mutableListOf("", "", "", "", "")
                                         deletePayload[subTabState] = stringValue
 
                                         val requestBody = mapOf(
