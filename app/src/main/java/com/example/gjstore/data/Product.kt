@@ -14,7 +14,8 @@ data class Product(
     var price: Double = 0.0,
     val stock: Int = 0,
     val threshold: Int = 0,
-    val date: String = ""
+    val date: String = "",
+    val idealStock: Int = 0
 ) {
     val formattedSize: String
         get() = if (size % 1.0 == 0.0) size.toInt().toString() else size.toString()

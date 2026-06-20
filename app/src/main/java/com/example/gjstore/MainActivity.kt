@@ -97,7 +97,6 @@ fun MainAppScreen() {
         }
     }
 
-    // Function to handle sync queue
     fun performAction(action: PendingAction) {
         coroutineScope.launch {
             try {
@@ -105,64 +104,59 @@ fun MainAppScreen() {
                 if (action.oldData != null) body["oldData"] = action.oldData
                 val response = RetrofitClient.apiService.modifySheet(body)
                 if (response.isSuccessful || response.code() == 302) {
-                    pendingQueue.remove(action)
-                    CacheManager.saveQueue(context, pendingQueue.toList())
+                    val respStr = response.body()?.string() ?: ""
+                    if (respStr.contains("success")) {
+                        pendingQueue.remove(action)
+                        CacheManager.saveQueue(context, pendingQueue.toList())
+                    } else if (respStr.contains("error")) {
+                        withContext(Dispatchers.Main) { Toast.makeText(context, "Sync Error: Row not found", Toast.LENGTH_LONG).show() }
+                    }
                 }
             } catch (e: Exception) { /* Keep in queue */ }
         }
     }
 
     LaunchedEffect(Unit) {
-        isLoading = true
-        isEventsLoading = true
-        
+        isLoading = true; isEventsLoading = true
         withContext(Dispatchers.IO) {
             val cachedProducts = CacheManager.loadProducts(context)
             val cachedEvents = CacheManager.loadEvents(context)
             val cachedSettings = CacheManager.loadSettings(context)
             val cachedQueue = CacheManager.loadQueue(context)
-            
             withContext(Dispatchers.Main) {
-                productsList.addAll(cachedProducts)
-                eventsList.addAll(cachedEvents)
-                pendingQueue.addAll(cachedQueue)
+                productsList.addAll(cachedProducts); eventsList.addAll(cachedEvents); pendingQueue.addAll(cachedQueue)
                 cachedSettings?.let {
-                    dynamicSettings.brands.addAll(it.brands); dynamicSettings.categories.addAll(it.categories)
-                    dynamicSettings.units.addAll(it.units); dynamicSettings.stores.addAll(it.stores)
-                    dynamicSettings.messengerKeys.addAll(it.messengerKeys)
+                    dynamicSettings.brands.clear(); dynamicSettings.brands.addAll(it.brands)
+                    dynamicSettings.categories.clear(); dynamicSettings.categories.addAll(it.categories)
+                    dynamicSettings.units.clear(); dynamicSettings.units.addAll(it.units)
+                    dynamicSettings.stores.clear(); dynamicSettings.stores.addAll(it.stores)
+                    dynamicSettings.messengerKeys.clear(); dynamicSettings.messengerKeys.addAll(it.messengerKeys)
                 }
-                // Try sync existing queue
                 pendingQueue.toList().forEach { performAction(it) }
             }
         }
-
         try {
-            val pResponse = RetrofitClient.apiService.readSheet("Products")
-            if (pResponse.isSuccessful) {
-                val newProducts = DataParser.parseProducts(pResponse.body())
-                productsList.clear(); productsList.addAll(newProducts)
-                withContext(Dispatchers.IO) { CacheManager.saveProducts(context, newProducts) }
+            val pRes = RetrofitClient.apiService.readSheet("Products")
+            if (pRes.isSuccessful) {
+                val newP = DataParser.parseProducts(pRes.body())
+                productsList.clear(); productsList.addAll(newP)
+                withContext(Dispatchers.IO) { CacheManager.saveProducts(context, newP) }
             }
-            val sResponse = RetrofitClient.apiService.readSheet("Settings")
-            if (sResponse.isSuccessful) {
-                DataParser.parseSettings(sResponse.body(), dynamicSettings)
+            val sRes = RetrofitClient.apiService.readSheet("Settings")
+            if (sRes.isSuccessful) {
+                DataParser.parseSettings(sRes.body(), dynamicSettings)
                 withContext(Dispatchers.IO) { CacheManager.saveSettings(context, dynamicSettings) }
             }
-            val eResponse = RetrofitClient.apiService.readSheet("Events")
-            if (eResponse.isSuccessful) {
-                val newEvents = DataParser.parseEvents(eResponse.body())
-                eventsList.clear(); eventsList.addAll(newEvents)
-                withContext(Dispatchers.IO) { CacheManager.saveEvents(context, newEvents) }
+            val eRes = RetrofitClient.apiService.readSheet("Events")
+            if (eRes.isSuccessful) {
+                val newE = DataParser.parseEvents(eRes.body())
+                eventsList.clear(); eventsList.addAll(newE)
+                withContext(Dispatchers.IO) { CacheManager.saveEvents(context, newE) }
             }
-            val aResponse = RetrofitClient.apiService.readSheet("Admin")
-            if (aResponse.isSuccessful) {
-                aResponse.body()?.getOrNull(1)?.getOrNull(0)?.let { CacheManager.saveAdmin(context, it) }
-            }
-        } catch (e: Exception) {
-            Toast.makeText(context, "Working Offline", Toast.LENGTH_SHORT).show()
-        } finally {
-            isLoading = false; isEventsLoading = false
-        }
+            val aRes = RetrofitClient.apiService.readSheet("Admin")
+            if (aRes.isSuccessful) aRes.body()?.getOrNull(1)?.getOrNull(0)?.let { CacheManager.saveAdmin(context, it) }
+        } catch (e: Exception) { Toast.makeText(context, "Working Offline", Toast.LENGTH_SHORT).show() }
+        finally { isLoading = false; isEventsLoading = false }
     }
 
     Scaffold(
@@ -172,11 +166,7 @@ fun MainAppScreen() {
                     title = { Row { Text("GJStore"); if (pendingQueue.isNotEmpty()) Text(" (Syncing...)", color = Color.Gray, style = MaterialTheme.typography.labelSmall) } },
                     actions = { Button(onClick = { if (isAdminLoggedIn) isAdminLoggedIn = false else showLoginDialog = true }) { Text(if (isAdminLoggedIn) "Logout" else "Admin") } }
                 )
-                if (isAdminLoggedIn) {
-                    TabRow(selectedTabIndex = currentAdminTab) {
-                        adminTabs.forEachIndexed { index, title -> Tab(selected = currentAdminTab == index, onClick = { currentAdminTab = index }, text = { Text(title) }) }
-                    }
-                }
+                if (isAdminLoggedIn) TabRow(selectedTabIndex = currentAdminTab) { adminTabs.forEachIndexed { i, t -> Tab(selected = currentAdminTab == i, onClick = { currentAdminTab = i }, text = { Text(t) }) } }
             }
         },
         floatingActionButton = {
@@ -193,23 +183,31 @@ fun MainAppScreen() {
                     val idx = productsList.indexOfFirst { it.id == updated.id }
                     if (idx != -1) {
                         productsList[idx] = updated
-                        val action = PendingAction("Products", "update", DataParser.productToRow(updated))
-                        pendingQueue.add(action); performAction(action)
+                        val act = PendingAction("Products", "update", DataParser.productToRow(updated))
+                        pendingQueue.add(act); performAction(act)
                         coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
+                        Toast.makeText(context, "Stock Updated", Toast.LENGTH_SHORT).show()
                     }
                 })
             } else {
-                AdminDashboard(productsList, dynamicSettings, eventsList, isEventsLoading, currentAdminTab, { target, actionStr ->
+                AdminDashboard(productsList, dynamicSettings, eventsList, isEventsLoading, currentAdminTab, { target, action ->
                     val data = DataParser.productToRow(target)
-                    val act = PendingAction("Products", actionStr, data)
+                    val act = PendingAction("Products", action, data)
                     pendingQueue.add(act); performAction(act)
                     coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
+                    Toast.makeText(context, "Product ${action.replaceFirstChar { it.uppercase() }}d", Toast.LENGTH_SHORT).show()
                 }, { editingProduct = it; showFormDialog = true }, { editingEvent = it; showEventDialog = true }, { event ->
                     eventsList.remove(event)
-                    val data = listOf(event.date, event.details, event.amount.toString())
+                    val data = DataParser.eventToRow(event)
                     val act = PendingAction("Events", "delete", data, data)
                     pendingQueue.add(act); performAction(act)
                     coroutineScope.launch(Dispatchers.IO) { CacheManager.saveEvents(context, eventsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
+                    Toast.makeText(context, "Event Deleted", Toast.LENGTH_SHORT).show()
+                }, { sheet, action, data, oldData ->
+                    val act = PendingAction(sheet, action, data, oldData)
+                    pendingQueue.add(act); performAction(act)
+                    coroutineScope.launch(Dispatchers.IO) { CacheManager.saveSettings(context, dynamicSettings); CacheManager.saveQueue(context, pendingQueue.toList()) }
+                    Toast.makeText(context, "Settings updated", Toast.LENGTH_SHORT).show()
                 })
             }
         }
@@ -218,13 +216,14 @@ fun MainAppScreen() {
     if (showLoginDialog) AdminLoginDialog({ showLoginDialog = false }, { isAdminLoggedIn = true; showLoginDialog = false })
     if (showEventDialog) EventEntryDialog(editingEvent, { showEventDialog = false; editingEvent = null }, { event ->
         val action = if (editingEvent == null) "add" else "update"
-        val data = listOf(event.date, event.details, event.amount.toString())
-        val oldData = if (editingEvent != null) listOf(editingEvent!!.date, editingEvent!!.details, editingEvent!!.amount.toString()) else null
+        val data = DataParser.eventToRow(event)
+        val oldData = if (editingEvent != null) DataParser.eventToRow(editingEvent!!) else null
         
         if (editingEvent == null) eventsList.add(0, event) else { val idx = eventsList.indexOf(editingEvent); if (idx != -1) eventsList[idx] = event }
         val act = PendingAction("Events", action, data, oldData)
         pendingQueue.add(act); performAction(act)
         coroutineScope.launch(Dispatchers.IO) { CacheManager.saveEvents(context, eventsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
+        Toast.makeText(context, if (editingEvent == null) "Event Added" else "Event Updated", Toast.LENGTH_SHORT).show()
         showEventDialog = false; editingEvent = null
     })
     if (showEventHistoryDialog) EmployeeEventHistoryDialog(eventsList, isEventsLoading, { showEventHistoryDialog = false }, { showEventDialog = true }, { editingEvent = it; showEventDialog = true })
@@ -233,6 +232,7 @@ fun MainAppScreen() {
         val act = PendingAction("Products", if (editingProduct == null) "add" else "update", DataParser.productToRow(finalized))
         pendingQueue.add(act); performAction(act)
         coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
+        Toast.makeText(context, if (editingProduct == null) "Product Added" else "Product Updated", Toast.LENGTH_SHORT).show()
         showFormDialog = false
     })
 }
@@ -274,12 +274,12 @@ fun AdminLoginDialog(onDismiss: () -> Unit, onLoginSuccess: () -> Unit) {
 }
 
 @Composable
-fun AdminDashboard(products: MutableList<Product>, settings: DropdownSettings, eventsList: MutableList<Event>, isEventsLoading: Boolean, currentAdminTab: Int, onUpdateSheet: (Product, String) -> Unit, onEditProductRequested: (Product) -> Unit, onEditEventRequested: (Event) -> Unit, onDeleteEvent: (Event) -> Unit) {
+fun AdminDashboard(products: MutableList<Product>, settings: DropdownSettings, eventsList: MutableList<Event>, isEventsLoading: Boolean, currentAdminTab: Int, onUpdateSheet: (Product, String) -> Unit, onEditProductRequested: (Product) -> Unit, onEditEventRequested: (Event) -> Unit, onDeleteEvent: (Event) -> Unit, onSettingsAction: (String, String, List<String?>, List<String?>?) -> Unit) {
     Column(modifier = Modifier.fillMaxSize()) {
         when (currentAdminTab) {
             0 -> AdminProductList(products, onEditProductRequested, { p -> products.remove(p); onUpdateSheet(p, "delete") })
             1 -> ShouldRebuyScreen(products)
-            2 -> DropdownSettingsManager(settings)
+            2 -> DropdownSettingsManager(settings, onSettingsAction)
             3 -> AdminEventsScreen(eventsList, isEventsLoading, onEditEventRequested, onDeleteEvent)
         }
     }
@@ -295,7 +295,14 @@ fun AdminProductList(products: List<Product>, onEdit: (Product) -> Unit, onDelet
             items(filtered) { p ->
                 Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                     Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Column(modifier = Modifier.weight(1f)) { Text("${p.name} ${p.formattedSize}${p.unit}", style = MaterialTheme.typography.titleLarge); Text("Price: ₱${p.price} (Cost: ₱${p.cost})", color = Color(0xFF00FF87)); Text("Stock: ${p.stock}") }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("${p.name} ${p.formattedSize}${p.unit}", style = MaterialTheme.typography.titleLarge)
+                            Text("Price: ₱${p.price} (Cost: ₱${p.cost})", color = Color(0xFF00FF87))
+                            if (p.lastBoughtStore.isNotBlank()) {
+                                Text("Store: ${p.lastBoughtStore}", style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
+                            }
+                            Text("Stock: ${p.stock}", color = if (p.stock <= p.threshold) Color.Red else Color.White)
+                        }
                         Row { IconButton(onClick = { onEdit(p) }) { Icon(Icons.Default.Edit, null, tint = Color(0xFFFF7D1E)) }; IconButton(onClick = { onDelete(p) }) { Icon(Icons.Default.Delete, null, tint = Color.Red) } }
                     }
                 }
@@ -307,17 +314,10 @@ fun AdminProductList(products: List<Product>, onEdit: (Product) -> Unit, onDelet
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AdminProductFormDialog(product: Product?, settings: DropdownSettings, onDismiss: () -> Unit, onSave: (Product) -> Unit) {
-    var name by remember { mutableStateOf(product?.name ?: "") }
-    var size by remember { mutableStateOf(product?.size?.toString() ?: "") }
-    var cost by remember { mutableStateOf(product?.cost?.toString() ?: "") }
-    var mVal by remember { mutableStateOf(product?.markupValue?.toString() ?: "") }
-    var stock by remember { mutableStateOf(product?.stock?.toString() ?: "") }
-    var thresh by remember { mutableStateOf(product?.threshold?.toString() ?: "") }
-    var brand by remember { mutableStateOf(product?.brand ?: "") }
-    var cat by remember { mutableStateOf(product?.category ?: "") }
-    var unit by remember { mutableStateOf(product?.unit ?: "") }
-    var store by remember { mutableStateOf(product?.lastBoughtStore ?: "") }
-    var mType by remember { mutableStateOf(product?.markupType ?: "Percentage") }
+    var name by remember { mutableStateOf(product?.name ?: "") }; var size by remember { mutableStateOf(product?.size?.toString() ?: "") }; var cost by remember { mutableStateOf(product?.cost?.toString() ?: "") }
+    var mVal by remember { mutableStateOf(product?.markupValue?.toString() ?: "") }; var stock by remember { mutableStateOf(product?.stock?.toString() ?: "") }; var thresh by remember { mutableStateOf(product?.threshold?.toString() ?: "") }
+    var brand by remember { mutableStateOf(product?.brand ?: "") }; var cat by remember { mutableStateOf(product?.category ?: "") }; var unit by remember { mutableStateOf(product?.unit ?: "") }; var store by remember { mutableStateOf(product?.lastBoughtStore ?: "") }; var mType by remember { mutableStateOf(product?.markupType ?: "Percentage") }
+    var ideal by remember { mutableStateOf(product?.idealStock?.toString() ?: "") }
 
     AlertDialog(onDismissRequest = onDismiss, title = { Text(if (product == null) "Add Product" else "Edit Product") }, text = {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -326,14 +326,31 @@ fun AdminProductFormDialog(product: Product?, settings: DropdownSettings, onDism
                 DropdownField("Brand", brand, settings.brands) { brand = it }; DropdownField("Category", cat, settings.categories) { cat = it }; DropdownField("Unit", unit, settings.units) { unit = it }
                 OutlinedTextField(size, { size = it }, label = { Text("Size") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(cost, { cost = it }, label = { Text("Cost") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                Row { RadioButton(mType == "Percentage", { mType = "Percentage" }); Text(" % "); RadioButton(mType == "Fixed", { mType = "Fixed" }); Text(" ₱ ") }
-                OutlinedTextField(mVal, { mVal = it }, label = { Text("Markup") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(stock, { stock = it }, label = { Text("Stock") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(thresh, { thresh = it }, label = { Text("Threshold") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                
+                Text("Markup Type", style = MaterialTheme.typography.labelMedium)
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    RadioButton(mType == "Percentage", { mType = "Percentage" }); Text(" Percentage (%) ")
+                    Spacer(modifier = Modifier.width(8.dp))
+                    RadioButton(mType == "Fixed", { mType = "Fixed" }); Text(" Fixed (₱) ")
+                }
+                
+                OutlinedTextField(mVal, { mVal = it }, label = { Text("Markup Value") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                
+                val calcPrice = remember(cost, mVal, mType) {
+                    val c = cost.toDoubleOrNull() ?: 0.0
+                    val v = mVal.toDoubleOrNull() ?: 0.0
+                    val res = if (mType == "Percentage") c * (1 + v / 100) else c + v
+                    kotlin.math.ceil(res).toInt()
+                }
+                Text("Selling Price: ₱$calcPrice", color = Color(0xFF00FF87), style = MaterialTheme.typography.titleMedium)
+
+                OutlinedTextField(ideal, { if (it.all { c -> c.isDigit() }) ideal = it }, label = { Text("Ideal Stock") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(stock, { if (it.all { c -> c.isDigit() }) stock = it }, label = { Text("Stock") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(thresh, { if (it.all { c -> c.isDigit() }) thresh = it }, label = { Text("Threshold") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
                 DropdownField("Store", store, settings.stores) { store = it }
             }
         }
-    }, confirmButton = { Button(onClick = { onSave(Product(product?.id ?: System.currentTimeMillis().toString(), name, brand, cat, unit, size.toDoubleOrNull() ?: 0.0, cost.toDoubleOrNull() ?: 0.0, store, mType, mVal.toDoubleOrNull() ?: 0.0, 0.0, stock.toIntOrNull() ?: 0, thresh.toIntOrNull() ?: 0, SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()))) }) { Text("Save") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+    }, confirmButton = { Button(onClick = { onSave(Product(product?.id ?: System.currentTimeMillis().toString(), name, brand, cat, unit, size.toDoubleOrNull() ?: 0.0, cost.toDoubleOrNull() ?: 0.0, store, mType, mVal.toDoubleOrNull() ?: 0.0, 0.0, stock.toIntOrNull() ?: 0, thresh.toIntOrNull() ?: 0, SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()), ideal.toIntOrNull() ?: 0)) }) { Text("Save") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -359,16 +376,47 @@ fun ShouldRebuyScreen(products: List<Product>) {
 
 fun exportManifest(context: Context, list: List<Product>) {
     try {
-        val fileName = "Manifest_${System.currentTimeMillis()}.txt"
-        val text = StringBuilder("REBUY MANIFEST\n\n").apply { list.forEach { append("- ${it.name} (${it.brand}) Stock: ${it.stock}/${it.threshold}\n") } }.toString()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val values = ContentValues().apply { put(MediaStore.MediaColumns.DISPLAY_NAME, fileName); put(MediaStore.MediaColumns.MIME_TYPE, "text/plain"); put(MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS) }
-            context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)?.let { uri -> context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }; Toast.makeText(context, "Saved", Toast.LENGTH_SHORT).show() }
-        } else {
-            val file = File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), fileName)
-            file.writeText(text); Toast.makeText(context, "Saved", Toast.LENGTH_SHORT).show()
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        
+        // File 1: Simple Order List for shopping
+        val fileName1 = "G&J_Sari-Sari_Store_Orderlist_$timestamp.txt"
+        val text1 = StringBuilder("G&J SARI-SARI STORE ORDER LIST\n\n").apply {
+            list.forEach {
+                val qtyToBuy = it.idealStock - it.stock
+                append("- ${it.name} ${it.formattedSize}${it.unit}: ${if (qtyToBuy > 0) qtyToBuy else 0}\n")
+            }
+        }.toString()
+
+        // File 2: Detailed Rebuy Info
+        val fileName2 = "GJStore_Rebuy_$timestamp.txt"
+        val text2 = StringBuilder("GJSTORE REBUY DETAILS\n\n").apply {
+            list.forEach {
+                append("- ${it.name}\n")
+                append("  Last Cost: ₱${it.cost} | Store: ${it.lastBoughtStore}\n\n")
+            }
+        }.toString()
+
+        saveToDownloads(context, fileName1, text1)
+        saveToDownloads(context, fileName2, text2)
+        
+        Toast.makeText(context, "Manifests Saved to Downloads", Toast.LENGTH_SHORT).show()
+    } catch (e: Exception) { Toast.makeText(context, "Export Failed", Toast.LENGTH_SHORT).show() }
+}
+
+private fun saveToDownloads(context: Context, fileName: String, content: String) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+            put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
         }
-    } catch (e: Exception) { Toast.makeText(context, "Failed", Toast.LENGTH_SHORT).show() }
+        context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)?.let { uri ->
+            context.contentResolver.openOutputStream(uri)?.use { it.write(content.toByteArray()) }
+        }
+    } else {
+        val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+        File(downloadsDir, fileName).writeText(content)
+    }
 }
 
 @Composable
@@ -378,7 +426,14 @@ fun AdminEventsScreen(events: List<Event>, isLoading: Boolean, onEdit: (Event) -
         items(events) { e ->
             Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                 Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) { Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(e.date.split(" ")[0], style = MaterialTheme.typography.labelMedium); Text("₱${e.amount}", color = if (e.amount < 0) Color.Red else Color(0xFF00FF87)) }; Text(e.details) }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(e.dateCreated, style = MaterialTheme.typography.labelMedium)
+                            Text("₱${e.amount}", color = if (e.amount < 0) Color.Red else Color(0xFF00FF87))
+                        }
+                        Text(e.details)
+                        Text("By: ${e.createdBy}${if (e.editedBy.isNotBlank()) " | Ed: ${e.editedBy} (${e.editedDate})" else ""}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                    }
                     Row { IconButton(onClick = { onEdit(e) }) { Icon(Icons.Default.Edit, null, tint = Color(0xFFFF7D1E)) }; IconButton(onClick = { onDelete(e) }) { Icon(Icons.Default.Delete, null, tint = Color.Red) } }
                 }
             }
@@ -387,12 +442,10 @@ fun AdminEventsScreen(events: List<Event>, isLoading: Boolean, onEdit: (Event) -
 }
 
 @Composable
-fun DropdownSettingsManager(settings: DropdownSettings) {
+fun DropdownSettingsManager(settings: DropdownSettings, onAction: (String, String, List<String?>, List<String?>?) -> Unit) {
     var subTab by remember { mutableIntStateOf(0) }
     val sections = listOf("Brands", "Categories", "Units", "Stores", "Messenger")
-    var input by remember { mutableStateOf("") }
-    var editIdx by remember { mutableIntStateOf(-1) }
-    var oldVal by remember { mutableStateOf("") }
+    var input by remember { mutableStateOf("") }; var editIdx by remember { mutableIntStateOf(-1) }; var oldVal by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope(); val context = LocalContext.current
     val list = when(subTab) { 0 -> settings.brands; 1 -> settings.categories; 2 -> settings.units; 3 -> settings.stores; else -> settings.messengerKeys }
 
@@ -408,9 +461,9 @@ fun DropdownSettingsManager(settings: DropdownSettings) {
                 if (input.isNotBlank()) {
                     val newVal = input.trim(); val payload = MutableList(5) { "" }.apply { set(subTab, newVal) }
                     val action = if (editIdx == -1) "add" else "update"
-                    val body = mutableMapOf<String, Any>("sheetName" to "Settings", "action" to action, "data" to payload)
-                    if (editIdx != -1) body["oldData"] = MutableList(5) { "" }.apply { set(subTab, oldVal) }
-                    scope.launch { try { if (RetrofitClient.apiService.modifySheet(body).isSuccessful) { if (editIdx == -1) { if (!list.contains(newVal)) list.add(newVal) } else { list[editIdx] = newVal; editIdx = -1 }; input = ""; withContext(Dispatchers.IO) { CacheManager.saveSettings(context, settings) } } } catch (e: Exception) {} }
+                    val oldPayload = if (editIdx != -1) MutableList(5) { "" }.apply { set(subTab, oldVal) } else null
+                    if (editIdx == -1) { if (!list.contains(newVal)) list.add(newVal) } else { list[editIdx] = newVal; editIdx = -1 }
+                    onAction("Settings", action, payload, oldPayload); input = ""
                 }
             }) { Text(if (editIdx == -1) "Add" else "Update") }
         }
@@ -420,7 +473,7 @@ fun DropdownSettingsManager(settings: DropdownSettings) {
                     Row(modifier = Modifier.padding(12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                         Text(s, modifier = Modifier.weight(1f))
                         IconButton(onClick = { editIdx = list.indexOf(s); input = s; oldVal = s }) { Icon(Icons.Default.Edit, null, tint = Color.LightGray) }
-                        IconButton(onClick = { scope.launch { try { val p = MutableList(5) { "" }.apply { set(subTab, s) }; if (RetrofitClient.apiService.modifySheet(mapOf("sheetName" to "Settings", "action" to "delete", "data" to p)).isSuccessful) { list.remove(s); withContext(Dispatchers.IO) { CacheManager.saveSettings(context, settings) } } } catch (e: Exception) {} } }) { Icon(Icons.Default.Delete, null, tint = Color.Red) }
+                        IconButton(onClick = { val p = MutableList(5) { "" }.apply { set(subTab, s) }; list.remove(s); onAction("Settings", "delete", p, p) }) { Icon(Icons.Default.Delete, null, tint = Color.Red) }
                     }
                 }
             }
@@ -434,14 +487,36 @@ fun updateApp(context: Context, scope: CoroutineScope) {
 
 @Composable
 fun EmployeeEventHistoryDialog(events: List<Event>, isLoading: Boolean, onDismiss: () -> Unit, onAddRequested: () -> Unit, onEditRequested: (Event) -> Unit) {
-    AlertDialog(onDismissRequest = onDismiss, title = { Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("History"); TextButton(onAddRequested) { Text("+ Add") } } }, text = { Column(modifier = Modifier.fillMaxHeight(0.7f)) { if (isLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth()); LazyColumn { items(events) { e -> Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) { Row(modifier = Modifier.padding(8.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { Column(modifier = Modifier.weight(1f)) { Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(e.date.split(" ")[0], style = MaterialTheme.typography.labelSmall); Text("₱${e.amount}", color = if (e.amount < 0) Color.Red else Color(0xFF00FF87)) }; Text(e.details, style = MaterialTheme.typography.bodySmall) }; IconButton(onClick = { onEditRequested(e) }) { Icon(Icons.Default.Edit, null, tint = Color(0xFFFF7D1E)) } } } } } } }, confirmButton = { TextButton(onDismiss) { Text("Close") } })
+    AlertDialog(onDismissRequest = onDismiss, title = { Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("History"); TextButton(onAddRequested) { Text("+ Add") } } }, text = { Column(modifier = Modifier.fillMaxHeight(0.7f)) { if (isLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth()); LazyColumn { items(events) { e -> Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) { Row(modifier = Modifier.padding(8.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { Column(modifier = Modifier.weight(1f)) { Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(e.dateCreated, style = MaterialTheme.typography.labelSmall); Text("₱${e.amount}", color = if (e.amount < 0) Color.Red else Color(0xFF00FF87)) }; Text(e.details, style = MaterialTheme.typography.bodySmall); Text("By: ${e.createdBy}${if (e.editedBy.isNotBlank()) " | Ed: ${e.editedBy}" else ""}", style = MaterialTheme.typography.labelSmall, color = Color.Gray) }; IconButton(onClick = { onEditRequested(e) }) { Icon(Icons.Default.Edit, null, tint = Color(0xFFFF7D1E)) } } } } } } }, confirmButton = { TextButton(onDismiss) { Text("Close") } })
 }
 
 @Composable
 fun EventEntryDialog(event: Event? = null, onDismiss: () -> Unit, onSave: (Event) -> Unit) {
-    var details by remember { mutableStateOf(event?.details ?: "") }; var amount by remember { mutableStateOf(event?.amount?.let { Math.abs(it).toString() } ?: "") }; var isExp by remember { mutableStateOf(event?.amount?.let { it < 0 } ?: true) }
-    val date = event?.date ?: SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-    AlertDialog(onDismissRequest = onDismiss, title = { Text(if (event == null) "Add Event" else "Edit Event") }, text = { Column { Text("Date: $date"); Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { RadioButton(isExp, { isExp = true }); Text("Expense"); Spacer(modifier = Modifier.width(16.dp)); RadioButton(!isExp, { isExp = false }); Text("Income") }; OutlinedTextField(details, { details = it }, label = { Text("Details") }, modifier = Modifier.fillMaxWidth()); OutlinedTextField(amount, { amount = it }, label = { Text("Amount") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth()) } }, confirmButton = { Button(onClick = { var a = amount.toDoubleOrNull() ?: 0.0; if (isExp && a > 0) a = -a; onSave(Event(date, details, a)) }) { Text("Save") } }, dismissButton = { TextButton(onDismiss) { Text("Cancel") } })
+    var details by remember { mutableStateOf(event?.details ?: "") }
+    var amount by remember { mutableStateOf(event?.amount?.toString() ?: "") }
+    var person by remember { mutableStateOf(if (event == null) "" else if (event.editedBy.isNotBlank()) event.editedBy else event.createdBy) }
+    val dateDisplay = if (event == null) SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date()) else event.dateCreated
+
+    AlertDialog(onDismissRequest = onDismiss, title = { Text(if (event == null) "Add Event" else "Edit Event") }, text = { 
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { 
+            Text("Date: $dateDisplay")
+            OutlinedTextField(details, { details = it }, label = { Text("Details") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(
+                value = amount, 
+                onValueChange = { if (it.isEmpty() || it == "-" || it.toDoubleOrNull() != null) amount = it }, 
+                label = { Text("Amount") }, 
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), 
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(person, { person = it }, label = { Text(if (event == null) "Created By" else "Edited By") }, modifier = Modifier.fillMaxWidth())
+        }
+    }, confirmButton = { Button(onClick = { 
+        val now = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date())
+        val a = amount.toDoubleOrNull() ?: 0.0
+        val finalized = if (event == null) Event(now, details, a, person, "", "") 
+                        else event.copy(details = details, amount = a, editedBy = person, editedDate = now)
+        onSave(finalized)
+    }) { Text("Save") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }
 
 object CacheManager {
@@ -467,7 +542,23 @@ object DataParser {
     fun parseProducts(body: List<List<String>>?): List<Product> {
         val list = mutableListOf<Product>()
         body?.drop(1)?.forEach { row ->
-            if (row.size >= 2) list.add(Product(row[0], row[1], row.getOrElse(2) { "" }, row.getOrElse(3) { "" }, row.getOrElse(4) { "" }, row.getOrNull(5)?.toDoubleOrNull() ?: 0.0, row.getOrNull(6)?.toDoubleOrNull() ?: 0.0, row.getOrElse(7) { "" }, row.getOrElse(8) { "Percentage" }, row.getOrNull(9)?.toDoubleOrNull() ?: 0.0, 0.0, row.getOrNull(11)?.toIntOrNull() ?: 0, row.getOrNull(12)?.toIntOrNull() ?: 0, row.getOrElse(13) { "" }))
+            if (row.size >= 2) list.add(Product(
+                row[0], 
+                row[1], 
+                row.getOrElse(2) { "" }, 
+                row.getOrElse(3) { "" }, 
+                row.getOrElse(4) { "" }, 
+                row.getOrNull(5)?.toDoubleOrNull() ?: 0.0, 
+                row.getOrNull(6)?.toDoubleOrNull() ?: 0.0, 
+                row.getOrElse(7) { "" }, 
+                row.getOrElse(8) { "Percentage" }, 
+                row.getOrNull(9)?.toDoubleOrNull() ?: 0.0, 
+                0.0, 
+                row.getOrNull(11)?.toIntOrNull() ?: 0, 
+                row.getOrNull(12)?.toIntOrNull() ?: 0, 
+                row.getOrElse(13) { "" },
+                row.getOrNull(14)?.toIntOrNull() ?: 0
+            ))
         }
         return list
     }
@@ -481,6 +572,9 @@ object DataParser {
             row.getOrNull(4)?.takeIf { it.isNotBlank() }?.let { ds.messengerKeys.add(it.trim()) }
         }
     }
-    fun parseEvents(body: List<List<String>>?): List<Event> = body?.drop(1)?.map { row -> Event(row[0], row[1], row.getOrNull(2)?.toDoubleOrNull() ?: 0.0) }?.reversed() ?: emptyList()
-    fun productToRow(p: Product) = listOf(p.id, p.name, p.brand, p.category, p.unit, p.size.toString(), p.cost.toString(), p.lastBoughtStore, p.markupType, p.markupValue.toString(), p.price.toString(), p.stock.toString(), p.threshold.toString(), SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()))
+    fun parseEvents(body: List<List<String>>?): List<Event> = body?.drop(1)?.map { row ->
+        Event(row.getOrElse(0){""}, row.getOrElse(1){""}, row.getOrNull(2)?.toDoubleOrNull() ?: 0.0, row.getOrElse(3){""}, row.getOrElse(4){""}, row.getOrElse(5){""})
+    }?.reversed() ?: emptyList()
+    fun productToRow(p: Product) = listOf(p.id, p.name, p.brand, p.category, p.unit, p.size.toString(), p.cost.toString(), p.lastBoughtStore, p.markupType, p.markupValue.toString(), p.price.toString(), p.stock.toString(), p.threshold.toString(), p.date.ifBlank { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()) }, p.idealStock.toString())
+    fun eventToRow(e: Event) = listOf(e.dateCreated, e.details, e.amount.toString(), e.createdBy, e.editedBy, e.editedDate)
 }
