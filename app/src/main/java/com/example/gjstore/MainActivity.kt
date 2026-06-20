@@ -382,22 +382,31 @@ fun ShouldRebuyScreen(products: List<Product>) {
 fun exportManifest(context: Context, list: List<Product>) {
     try {
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-        
+        val grouped = list.groupBy { it.category }.toSortedMap(compareBy { it.lowercase() })
+
         // File 1: Simple Order List for shopping
         val fileName1 = "G&J_Sari-Sari_Store_Orderlist_$timestamp.txt"
         val text1 = StringBuilder("G&J SARI-SARI STORE ORDER LIST\n\n").apply {
-            list.forEach {
-                val qtyToBuy = it.idealStock - it.stock
-                append("- ${it.name} ${it.formattedSize}${it.unit}: ${if (qtyToBuy > 0) qtyToBuy else 0}\n")
+            grouped.forEach { (category, products) ->
+                append("--- ${category.ifBlank { "UNCATEGORIZED" }.uppercase()} ---\n")
+                products.sortedBy { it.name.lowercase() }.forEach {
+                    val qtyToBuy = it.idealStock - it.stock
+                    append("- ${it.name} ${it.formattedSize}${it.unit}: ${if (qtyToBuy > 0) qtyToBuy else 0}\n")
+                }
+                append("\n")
             }
         }.toString()
 
         // File 2: Detailed Rebuy Info
         val fileName2 = "GJStore_Rebuy_$timestamp.txt"
         val text2 = StringBuilder("GJSTORE REBUY DETAILS\n\n").apply {
-            list.forEach {
-                append("- ${it.name}\n")
-                append("  Last Cost: ₱${it.cost} | Store: ${it.lastBoughtStore}\n\n")
+            grouped.forEach { (category, products) ->
+                append("--- ${category.ifBlank { "UNCATEGORIZED" }.uppercase()} ---\n")
+                products.sortedBy { it.name.lowercase() }.forEach {
+                    append("- ${it.name}\n")
+                    append("  Last Cost: ₱${it.cost} | Store: ${it.lastBoughtStore}\n\n")
+                }
+                append("\n")
             }
         }.toString()
 
