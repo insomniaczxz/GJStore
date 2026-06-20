@@ -58,9 +58,12 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import com.example.gjstore.data.DropdownSettings
 import com.example.gjstore.data.Product
 import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import java.io.File
 import java.io.FileWriter
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import android.content.ContentValues
 import android.provider.MediaStore
 import android.content.Intent
@@ -77,6 +80,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import android.content.Context
+import com.example.gjstore.data.Event
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -128,16 +133,63 @@ fun MainAppScreen() {
             isLoading = true
             isEventsLoading = true
 
+            // 0. Initial Load from Cache (Offline Support)
+            withContext(Dispatchers.IO) {
+                val gson = Gson()
+                
+                // Products
+                val productsFile = File(context.filesDir, "products_cache.json")
+                if (productsFile.exists()) {
+                    try {
+                        val type = object : TypeToken<List<Product>>() {}.type
+                        val cached: List<Product> = gson.fromJson(productsFile.readText(), type)
+                        withContext(Dispatchers.Main) {
+                            productsList.clear()
+                            productsList.addAll(cached)
+                        }
+                    } catch (e: Exception) { e.printStackTrace() }
+                }
+
+                // Settings
+                val settingsFile = File(context.filesDir, "settings_cache.json")
+                if (settingsFile.exists()) {
+                    try {
+                        val type = object : TypeToken<Map<String, List<String>>>() {}.type
+                        val cached: Map<String, List<String>> = gson.fromJson(settingsFile.readText(), type)
+                        withContext(Dispatchers.Main) {
+                            cached["brands"]?.let { dynamicSettings.brands.clear(); dynamicSettings.brands.addAll(it) }
+                            cached["categories"]?.let { dynamicSettings.categories.clear(); dynamicSettings.categories.addAll(it) }
+                            cached["units"]?.let { dynamicSettings.units.clear(); dynamicSettings.units.addAll(it) }
+                            cached["stores"]?.let { dynamicSettings.stores.clear(); dynamicSettings.stores.addAll(it) }
+                            cached["messengerKeys"]?.let { dynamicSettings.messengerKeys.clear(); dynamicSettings.messengerKeys.addAll(it) }
+                        }
+                    } catch (e: Exception) { e.printStackTrace() }
+                }
+
+                // Events
+                val eventsFile = File(context.filesDir, "events_cache.json")
+                if (eventsFile.exists()) {
+                    try {
+                        val type = object : TypeToken<List<com.example.gjstore.data.Event>>() {}.type
+                        val cached: List<com.example.gjstore.data.Event> = gson.fromJson(eventsFile.readText(), type)
+                        withContext(Dispatchers.Main) {
+                            eventsList.clear()
+                            eventsList.addAll(cached)
+                        }
+                    } catch (e: Exception) { e.printStackTrace() }
+                }
+            }
+
             // 1. Fetching Products List Catalog
             val productResponse = com.example.gjstore.network.RetrofitClient.apiService.readSheet(sheetName = "Products")
             if (productResponse.isSuccessful && productResponse.body() != null) {
                 val rawRows = productResponse.body()!!
-                productsList.clear()
+                val newProducts = mutableListOf<Product>()
                 if (rawRows.size > 1) {
                     for (i in 1 until rawRows.size) {
                         val row = rawRows[i]
                         if (row.size >= 13) {
-                            productsList.add(
+                            newProducts.add(
                                 Product(
                                     id = row[0], name = row[1], brand = row[2], category = row[3],
                                     unit = row[4], size = row[5].toDoubleOrNull() ?: 0.0,
@@ -148,7 +200,7 @@ fun MainAppScreen() {
                                 )
                             )
                         } else if (row.size >= 2) {
-                            productsList.add(
+                            newProducts.add(
                                 Product(
                                     id = row[0],
                                     name = row[1],
@@ -168,9 +220,15 @@ fun MainAppScreen() {
                         }
                     }
                 }
+                productsList.clear()
+                productsList.addAll(newProducts)
+                // Cache updated products
+                coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    File(context.filesDir, "products_cache.json").writeText(Gson().toJson(newProducts))
+                }
             } else {
                 coroutineScope.launch {
-                    Toast.makeText(context, "Products sheet load failed: ${productResponse.message()}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "Cloud sync failed. Working with cached data.", Toast.LENGTH_SHORT).show()
                 }
             }
 
@@ -205,24 +263,41 @@ fun MainAppScreen() {
                         }
                     }
                 }
+                // Cache updated settings
+                coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    val settingsMap = mapOf(
+                        "brands" to dynamicSettings.brands.toList(),
+                        "categories" to dynamicSettings.categories.toList(),
+                        "units" to dynamicSettings.units.toList(),
+                        "stores" to dynamicSettings.stores.toList(),
+                        "messengerKeys" to dynamicSettings.messengerKeys.toList()
+                    )
+                    File(context.filesDir, "settings_cache.json").writeText(Gson().toJson(settingsMap))
+                }
             }
 
             // 3. Fetching Events
             val eventsResponse = com.example.gjstore.network.RetrofitClient.apiService.readSheet(sheetName = "Events")
             if (eventsResponse.isSuccessful && eventsResponse.body() != null) {
                 val rawRows = eventsResponse.body()!!
-                eventsList.clear()
+                val newEvents = mutableListOf<com.example.gjstore.data.Event>()
                 for (i in 1 until rawRows.size) {
                     val row = rawRows[i]
                     if (row.size >= 3) {
-                        eventsList.add(0, com.example.gjstore.data.Event(row[0], row[1], row[2].toDoubleOrNull() ?: 0.0))
+                        newEvents.add(0, com.example.gjstore.data.Event(row[0], row[1], row[2].toDoubleOrNull() ?: 0.0))
                     }
+                }
+                eventsList.clear()
+                eventsList.addAll(newEvents)
+                // Cache updated events
+                coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    File(context.filesDir, "events_cache.json").writeText(Gson().toJson(newEvents))
                 }
             }
         } catch (e: Exception) {
             e.printStackTrace()
             coroutineScope.launch {
-                Toast.makeText(context, "Network/Parsing Error: App cannot connect to Sheet.", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "Network error. Working offline with cached data.", Toast.LENGTH_LONG).show()
             }
         } finally {
             isLoading = false
@@ -363,6 +438,12 @@ fun MainAppScreen() {
                                                         if (response.isSuccessful || response.code() == 302) {
                                                             val idx = productsList.indexOfFirst { it.id == product.id }
                                                             if (idx != -1) productsList[idx] = updatedProduct
+                                                            
+                                                            // Update cache
+                                                            coroutineScope.launch(Dispatchers.IO) {
+                                                                File(context.filesDir, "products_cache.json").writeText(Gson().toJson(productsList.toList()))
+                                                            }
+                                                            
                                                             Toast.makeText(context, "Stock updated!", Toast.LENGTH_SHORT).show()
                                                             showStockEditDialog = false
                                                         } else {
@@ -429,6 +510,12 @@ fun MainAppScreen() {
                                         "delete" -> "Product removed successfully!"
                                         else -> "Google Sheet Sync Successful!"
                                     }
+                                    
+                                    // Update cache
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        File(context.filesDir, "products_cache.json").writeText(Gson().toJson(productsList.toList()))
+                                    }
+                                    
                                     Toast.makeText(context, successMessage, Toast.LENGTH_SHORT).show()
                                 } else {
                                     Toast.makeText(context, "Cloud sync failed: ${response.message()}", Toast.LENGTH_SHORT).show()
@@ -528,6 +615,12 @@ fun MainAppScreen() {
                         val response = com.example.gjstore.network.RetrofitClient.apiService.modifySheet(requestBody)
                         if (response.isSuccessful || response.code() == 302) {
                             eventsList.add(0, event) // Add to local list immediately
+                            
+                            // Update cache
+                            coroutineScope.launch(Dispatchers.IO) {
+                                File(context.filesDir, "events_cache.json").writeText(Gson().toJson(eventsList.toList()))
+                            }
+                            
                             Toast.makeText(context, "Event recorded successfully!", Toast.LENGTH_SHORT).show()
                         } else {
                             Toast.makeText(context, "Failed to record event.", Toast.LENGTH_SHORT).show()
@@ -1248,6 +1341,19 @@ fun DropdownSettingsManager(settings: DropdownSettings) {
                                         editingIndex = -1
                                         oldValueForUpdate = ""
                                     }
+                                    
+                                    // Update cache
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        val settingsMap = mapOf(
+                                            "brands" to settings.brands.toList(),
+                                            "categories" to settings.categories.toList(),
+                                            "units" to settings.units.toList(),
+                                            "stores" to settings.stores.toList(),
+                                            "messengerKeys" to settings.messengerKeys.toList()
+                                        )
+                                        File(context.filesDir, "settings_cache.json").writeText(Gson().toJson(settingsMap))
+                                    }
+                                    
                                     entryInputText = ""
                                     Toast.makeText(context, "Success!", Toast.LENGTH_SHORT).show()
                                 } else {
@@ -1317,6 +1423,19 @@ fun DropdownSettingsManager(settings: DropdownSettings) {
                                                 editingIndex = -1
                                                 entryInputText = ""
                                             }
+                                            
+                                            // Update cache
+                                            coroutineScope.launch(Dispatchers.IO) {
+                                                val settingsMap = mapOf(
+                                                    "brands" to settings.brands.toList(),
+                                                    "categories" to settings.categories.toList(),
+                                                    "units" to settings.units.toList(),
+                                                    "stores" to settings.stores.toList(),
+                                                    "messengerKeys" to settings.messengerKeys.toList()
+                                                )
+                                                File(context.filesDir, "settings_cache.json").writeText(Gson().toJson(settingsMap))
+                                            }
+
                                             Toast.makeText(context, "Removed!", Toast.LENGTH_SHORT).show()
                                         } else {
                                             Toast.makeText(context, "Error: ${response.code()}", Toast.LENGTH_SHORT).show()
