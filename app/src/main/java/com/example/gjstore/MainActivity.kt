@@ -453,7 +453,7 @@ fun DropdownSettingsManager(settings: DropdownSettings, onAction: (String, Strin
     var input by remember { mutableStateOf("") }; var editIdx by remember { mutableIntStateOf(-1) }; var oldVal by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope(); val context = LocalContext.current
     val list = when(subTab) { 0 -> settings.brands; 1 -> settings.categories; 2 -> settings.units; 3 -> settings.stores; else -> settings.messengerKeys }
-    val sortedList by remember { derivedStateOf { list.sortedBy { it.lowercase() } } }
+    val sortedList by remember(subTab) { derivedStateOf { list.sortedBy { it.lowercase() } } }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
