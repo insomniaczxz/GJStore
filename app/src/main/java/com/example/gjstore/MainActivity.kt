@@ -288,7 +288,7 @@ fun AdminDashboard(products: MutableList<Product>, settings: DropdownSettings, e
 @Composable
 fun AdminProductList(products: List<Product>, onEdit: (Product) -> Unit, onDelete: (Product) -> Unit) {
     var query by remember { mutableStateOf("") }
-    val filtered by remember { derivedStateOf { products.filter { it.name.contains(query, true) || it.brand.contains(query, true) }.sortedBy { it.name.lowercase() } } }
+    val filtered by remember { derivedStateOf { products.filter { it.name.contains(query, true) || it.brand.contains(query, true) || it.category.contains(query, true) }.sortedBy { it.name.lowercase() } } }
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         OutlinedTextField(query, { query = it }, label = { Text("Search Inventory") }, modifier = Modifier.fillMaxWidth())
         LazyColumn {
@@ -319,11 +319,16 @@ fun AdminProductFormDialog(product: Product?, settings: DropdownSettings, onDism
     var brand by remember { mutableStateOf(product?.brand ?: "") }; var cat by remember { mutableStateOf(product?.category ?: "") }; var unit by remember { mutableStateOf(product?.unit ?: "") }; var store by remember { mutableStateOf(product?.lastBoughtStore ?: "") }; var mType by remember { mutableStateOf(product?.markupType ?: "Percentage") }
     var ideal by remember { mutableStateOf(product?.idealStock?.toString() ?: "") }
 
+    val sortedBrands = remember { derivedStateOf { settings.brands.sortedBy { it.lowercase() } } }
+    val sortedCategories = remember { derivedStateOf { settings.categories.sortedBy { it.lowercase() } } }
+    val sortedUnits = remember { derivedStateOf { settings.units.sortedBy { it.lowercase() } } }
+    val sortedStores = remember { derivedStateOf { settings.stores.sortedBy { it.lowercase() } } }
+
     AlertDialog(onDismissRequest = onDismiss, title = { Text(if (product == null) "Add Product" else "Edit Product") }, text = {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             item {
                 OutlinedTextField(name, { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
-                DropdownField("Brand", brand, settings.brands) { brand = it }; DropdownField("Category", cat, settings.categories) { cat = it }; DropdownField("Unit", unit, settings.units) { unit = it }
+                DropdownField("Brand", brand, sortedBrands.value) { brand = it }; DropdownField("Category", cat, sortedCategories.value) { cat = it }; DropdownField("Unit", unit, sortedUnits.value) { unit = it }
                 OutlinedTextField(size, { size = it }, label = { Text("Size") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(cost, { cost = it }, label = { Text("Cost") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
                 
@@ -347,7 +352,7 @@ fun AdminProductFormDialog(product: Product?, settings: DropdownSettings, onDism
                 OutlinedTextField(ideal, { if (it.all { c -> c.isDigit() }) ideal = it }, label = { Text("Ideal Stock") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(stock, { if (it.all { c -> c.isDigit() }) stock = it }, label = { Text("Stock") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(thresh, { if (it.all { c -> c.isDigit() }) thresh = it }, label = { Text("Threshold") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                DropdownField("Store", store, settings.stores) { store = it }
+                DropdownField("Store", store, sortedStores.value) { store = it }
             }
         }
     }, confirmButton = { Button(onClick = { onSave(Product(product?.id ?: System.currentTimeMillis().toString(), name, brand, cat, unit, size.toDoubleOrNull() ?: 0.0, cost.toDoubleOrNull() ?: 0.0, store, mType, mVal.toDoubleOrNull() ?: 0.0, 0.0, stock.toIntOrNull() ?: 0, thresh.toIntOrNull() ?: 0, SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()), ideal.toIntOrNull() ?: 0)) }) { Text("Save") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
@@ -366,7 +371,7 @@ fun DropdownField(label: String, value: String, options: List<String>, onValueCh
 
 @Composable
 fun ShouldRebuyScreen(products: List<Product>) {
-    val list = products.filter { it.stock <= it.threshold }
+    val list = products.filter { it.stock <= it.threshold }.sortedBy { it.name.lowercase() }
     val context = LocalContext.current
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         LazyColumn(modifier = Modifier.weight(1f)) { items(list) { p -> Card(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), colors = CardDefaults.cardColors(containerColor = Color(0x33FF0000))) { Row(modifier = Modifier.padding(12.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Column { Text(p.name); Text("${p.brand} | ${p.lastBoughtStore}", style = MaterialTheme.typography.bodySmall) }; Text("${p.stock} / ${p.threshold}", color = Color.Red) } } } }
@@ -448,6 +453,7 @@ fun DropdownSettingsManager(settings: DropdownSettings, onAction: (String, Strin
     var input by remember { mutableStateOf("") }; var editIdx by remember { mutableIntStateOf(-1) }; var oldVal by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope(); val context = LocalContext.current
     val list = when(subTab) { 0 -> settings.brands; 1 -> settings.categories; 2 -> settings.units; 3 -> settings.stores; else -> settings.messengerKeys }
+    val sortedList by remember { derivedStateOf { list.sortedBy { it.lowercase() } } }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -468,7 +474,7 @@ fun DropdownSettingsManager(settings: DropdownSettings, onAction: (String, Strin
             }) { Text(if (editIdx == -1) "Add" else "Update") }
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 16.dp)) {
-            items(list) { s ->
+            items(sortedList) { s ->
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Row(modifier = Modifier.padding(12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                         Text(s, modifier = Modifier.weight(1f))
