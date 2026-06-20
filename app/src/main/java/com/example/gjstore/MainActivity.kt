@@ -2,86 +2,40 @@ package com.example.gjstore
 
 import android.os.Bundle
 import android.widget.Toast
+import android.content.ContentValues
+import android.content.Context
+import android.content.Intent
+import android.provider.MediaStore
+import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.ScrollableTabRow
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
-import com.example.gjstore.data.DropdownSettings
-import com.example.gjstore.data.Product
+import androidx.core.content.FileProvider
+import com.example.gjstore.data.*
+import com.example.gjstore.network.RetrofitClient
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import kotlinx.coroutines.*
 import java.io.File
-import java.io.FileWriter
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.Dispatchers
-import android.content.ContentValues
-import android.provider.MediaStore
-import android.content.Intent
-import androidx.core.content.FileProvider
 import java.net.HttpURLConnection
 import java.net.URL
-import androidx.compose.material.icons.filled.SystemUpdate
-import android.os.Build
-import java.io.OutputStream
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import android.content.Context
-import com.example.gjstore.data.Event
+import java.text.SimpleDateFormat
+import java.util.*
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -109,202 +63,87 @@ fun GJStoreDarkTheme(content: @Composable () -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainAppScreen() {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    
     var searchQuery by remember { mutableStateOf("") }
     var isAdminLoggedIn by remember { mutableStateOf(false) }
     var showLoginDialog by remember { mutableStateOf(false) }
     var showEventDialog by remember { mutableStateOf(false) }
     var showEventHistoryDialog by remember { mutableStateOf(false) }
-    var currentAdminTab by remember { mutableStateOf(0) }
+    var currentAdminTab by remember { mutableIntStateOf(0) }
     val adminTabs = listOf("Products", "Rebuy", "Settings", "Events")
 
     var editingProduct by remember { mutableStateOf<Product?>(null) }
     var showFormDialog by remember { mutableStateOf(false) }
 
-    val coroutineScope = rememberCoroutineScope()
     val productsList = remember { mutableStateListOf<Product>() }
-    val eventsList = remember { mutableStateListOf<com.example.gjstore.data.Event>() }
+    val eventsList = remember { mutableStateListOf<Event>() }
     var isLoading by remember { mutableStateOf(true) }
     var isEventsLoading by remember { mutableStateOf(false) }
-    val context = LocalContext.current
     val dynamicSettings = remember { DropdownSettings() }
 
+    val filteredProducts by remember {
+        derivedStateOf {
+            productsList.filter {
+                it.name.contains(searchQuery, ignoreCase = true) ||
+                it.brand.contains(searchQuery, ignoreCase = true) ||
+                it.category.contains(searchQuery, ignoreCase = true)
+            }.sortedBy { it.name.lowercase() }
+        }
+    }
+
     LaunchedEffect(Unit) {
-        try {
-            isLoading = true
-            isEventsLoading = true
-
-            // 0. Initial Load from Cache (Offline Support)
-            withContext(Dispatchers.IO) {
-                val gson = Gson()
-                
-                // Products
-                val productsFile = File(context.filesDir, "products_cache.json")
-                if (productsFile.exists()) {
-                    try {
-                        val type = object : TypeToken<List<Product>>() {}.type
-                        val cached: List<Product> = gson.fromJson(productsFile.readText(), type)
-                        withContext(Dispatchers.Main) {
-                            productsList.clear()
-                            productsList.addAll(cached)
-                        }
-                    } catch (e: Exception) { e.printStackTrace() }
-                }
-
-                // Settings
-                val settingsFile = File(context.filesDir, "settings_cache.json")
-                if (settingsFile.exists()) {
-                    try {
-                        val type = object : TypeToken<Map<String, List<String>>>() {}.type
-                        val cached: Map<String, List<String>> = gson.fromJson(settingsFile.readText(), type)
-                        withContext(Dispatchers.Main) {
-                            cached["brands"]?.let { dynamicSettings.brands.clear(); dynamicSettings.brands.addAll(it) }
-                            cached["categories"]?.let { dynamicSettings.categories.clear(); dynamicSettings.categories.addAll(it) }
-                            cached["units"]?.let { dynamicSettings.units.clear(); dynamicSettings.units.addAll(it) }
-                            cached["stores"]?.let { dynamicSettings.stores.clear(); dynamicSettings.stores.addAll(it) }
-                            cached["messengerKeys"]?.let { dynamicSettings.messengerKeys.clear(); dynamicSettings.messengerKeys.addAll(it) }
-                        }
-                    } catch (e: Exception) { e.printStackTrace() }
-                }
-
-                // Events
-                val eventsFile = File(context.filesDir, "events_cache.json")
-                if (eventsFile.exists()) {
-                    try {
-                        val type = object : TypeToken<List<com.example.gjstore.data.Event>>() {}.type
-                        val cached: List<com.example.gjstore.data.Event> = gson.fromJson(eventsFile.readText(), type)
-                        withContext(Dispatchers.Main) {
-                            eventsList.clear()
-                            eventsList.addAll(cached)
-                        }
-                    } catch (e: Exception) { e.printStackTrace() }
+        isLoading = true
+        isEventsLoading = true
+        
+        withContext(Dispatchers.IO) {
+            val cachedProducts = CacheManager.loadProducts(context)
+            val cachedEvents = CacheManager.loadEvents(context)
+            val cachedSettings = CacheManager.loadSettings(context)
+            
+            withContext(Dispatchers.Main) {
+                productsList.addAll(cachedProducts)
+                eventsList.addAll(cachedEvents)
+                cachedSettings?.let {
+                    dynamicSettings.brands.addAll(it.brands)
+                    dynamicSettings.categories.addAll(it.categories)
+                    dynamicSettings.units.addAll(it.units)
+                    dynamicSettings.stores.addAll(it.stores)
+                    dynamicSettings.messengerKeys.addAll(it.messengerKeys)
                 }
             }
+        }
 
-            // 1. Fetching Products List Catalog
-            val productResponse = com.example.gjstore.network.RetrofitClient.apiService.readSheet(sheetName = "Products")
-            if (productResponse.isSuccessful && productResponse.body() != null) {
-                val rawRows = productResponse.body()!!
-                val newProducts = mutableListOf<Product>()
-                if (rawRows.size > 1) {
-                    for (i in 1 until rawRows.size) {
-                        val row = rawRows[i]
-                        if (row.size >= 13) {
-                            newProducts.add(
-                                Product(
-                                    id = row[0], name = row[1], brand = row[2], category = row[3],
-                                    unit = row[4], size = row[5].toDoubleOrNull() ?: 0.0,
-                                    cost = row[6].toDoubleOrNull() ?: 0.0, lastBoughtStore = row[7],
-                                    markupType = row[8], markupValue = row[9].toDoubleOrNull() ?: 0.0,
-                                    stock = row[11].toIntOrNull() ?: 0, threshold = row[12].toIntOrNull() ?: 0,
-                                    date = if (row.size > 13) row[13] else ""
-                                )
-                            )
-                        } else if (row.size >= 2) {
-                            newProducts.add(
-                                Product(
-                                    id = row[0],
-                                    name = row[1],
-                                    brand = if (row.size > 2) row[2] else "",
-                                    category = if (row.size > 3) row[3] else "",
-                                    unit = if (row.size > 4) row[4] else "",
-                                    size = if (row.size > 5) row[5].toDoubleOrNull() ?: 0.0 else 0.0,
-                                    cost = if (row.size > 6) row[6].toDoubleOrNull() ?: 0.0 else 0.0,
-                                    lastBoughtStore = if (row.size > 7) row[7] else "",
-                                    markupType = if (row.size > 8) row[8] else "Percentage",
-                                    markupValue = if (row.size > 9) row[9].toDoubleOrNull() ?: 0.0 else 0.0,
-                                    stock = if (row.size > 11) row[11].toIntOrNull() ?: 0 else 0,
-                                    threshold = if (row.size > 12) row[12].toIntOrNull() ?: 0 else 0,
-                                    date = if (row.size > 13) row[13] else ""
-                                )
-                            )
-                        }
-                    }
-                }
+        try {
+            val pResponse = RetrofitClient.apiService.readSheet("Products")
+            if (pResponse.isSuccessful) {
+                val newProducts = DataParser.parseProducts(pResponse.body())
                 productsList.clear()
                 productsList.addAll(newProducts)
-                // Cache updated products
-                coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                    File(context.filesDir, "products_cache.json").writeText(Gson().toJson(newProducts))
-                }
-            } else {
-                coroutineScope.launch {
-                    Toast.makeText(context, "Cloud sync failed. Working with cached data.", Toast.LENGTH_SHORT).show()
-                }
+                withContext(Dispatchers.IO) { CacheManager.saveProducts(context, newProducts) }
             }
 
-            // 2. Fetching Configured Settings Parameters
-            val settingsResponse = com.example.gjstore.network.RetrofitClient.apiService.readSheet(sheetName = "Settings")
-            if (settingsResponse.isSuccessful && settingsResponse.body() != null) {
-                val dataGrid = settingsResponse.body()!!
-                
-                dynamicSettings.brands.clear()
-                dynamicSettings.categories.clear()
-                dynamicSettings.units.clear()
-                dynamicSettings.stores.clear()
-                dynamicSettings.messengerKeys.clear()
-
-                if (dataGrid.size > 1) {
-                    for (rowIndex in 1 until dataGrid.size) {
-                        val rowValues = dataGrid[rowIndex]
-                        if (rowValues.isNotEmpty() && rowValues[0].isNotBlank()) {
-                            dynamicSettings.brands.add(rowValues[0].trim())
-                        }
-                        if (rowValues.size > 1 && rowValues[1].isNotBlank()) {
-                            dynamicSettings.categories.add(rowValues[1].trim())
-                        }
-                        if (rowValues.size > 2 && rowValues[2].isNotBlank()) {
-                            dynamicSettings.units.add(rowValues[2].trim())
-                        }
-                        if (rowValues.size > 3 && rowValues[3].isNotBlank()) {
-                            dynamicSettings.stores.add(rowValues[3].trim())
-                        }
-                        if (rowValues.size > 4 && rowValues[4].isNotBlank()) {
-                            dynamicSettings.messengerKeys.add(rowValues[4].trim())
-                        }
-                    }
-                }
-                // Cache updated settings
-                coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                    val settingsMap = mapOf(
-                        "brands" to dynamicSettings.brands.toList(),
-                        "categories" to dynamicSettings.categories.toList(),
-                        "units" to dynamicSettings.units.toList(),
-                        "stores" to dynamicSettings.stores.toList(),
-                        "messengerKeys" to dynamicSettings.messengerKeys.toList()
-                    )
-                    File(context.filesDir, "settings_cache.json").writeText(Gson().toJson(settingsMap))
-                }
+            val sResponse = RetrofitClient.apiService.readSheet("Settings")
+            if (sResponse.isSuccessful) {
+                DataParser.parseSettings(sResponse.body(), dynamicSettings)
+                withContext(Dispatchers.IO) { CacheManager.saveSettings(context, dynamicSettings) }
             }
 
-            // 3. Fetching Events
-            val eventsResponse = com.example.gjstore.network.RetrofitClient.apiService.readSheet(sheetName = "Events")
-            if (eventsResponse.isSuccessful && eventsResponse.body() != null) {
-                val rawRows = eventsResponse.body()!!
-                val newEvents = mutableListOf<com.example.gjstore.data.Event>()
-                for (i in 1 until rawRows.size) {
-                    val row = rawRows[i]
-                    if (row.size >= 3) {
-                        newEvents.add(0, com.example.gjstore.data.Event(row[0], row[1], row[2].toDoubleOrNull() ?: 0.0))
-                    }
-                }
+            val eResponse = RetrofitClient.apiService.readSheet("Events")
+            if (eResponse.isSuccessful) {
+                val newEvents = DataParser.parseEvents(eResponse.body())
                 eventsList.clear()
                 eventsList.addAll(newEvents)
-                // Cache updated events
-                coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                    File(context.filesDir, "events_cache.json").writeText(Gson().toJson(newEvents))
-                }
+                withContext(Dispatchers.IO) { CacheManager.saveEvents(context, newEvents) }
             }
         } catch (e: Exception) {
-            e.printStackTrace()
-            coroutineScope.launch {
-                Toast.makeText(context, "Network error. Working offline with cached data.", Toast.LENGTH_LONG).show()
-            }
+            Toast.makeText(context, "Working Offline", Toast.LENGTH_SHORT).show()
         } finally {
             isLoading = false
             isEventsLoading = false
         }
     }
-
 
     Scaffold(
         topBar = {
@@ -328,144 +167,34 @@ fun MainAppScreen() {
         },
         floatingActionButton = {
             if (isAdminLoggedIn) {
-                if (currentAdminTab == 0) {
+                if (currentAdminTab == 0 || currentAdminTab == 3) {
                     FloatingActionButton(onClick = {
-                        editingProduct = null
-                        showFormDialog = true
+                        if (currentAdminTab == 0) { editingProduct = null; showFormDialog = true }
+                        else showEventDialog = true
                     }) {
-                        Icon(Icons.Default.Add, contentDescription = "Add Product")
-                    }
-                } else if (currentAdminTab == 3) {
-                    FloatingActionButton(onClick = {
-                        showEventDialog = true
-                    }) {
-                        Icon(Icons.Default.Add, contentDescription = "Add Event")
+                        Icon(Icons.Default.Add, contentDescription = "Add")
                     }
                 }
             }
         }
     ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .background(MaterialTheme.colorScheme.background)
-        ) {
-            if (isLoading) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            }
+        Column(modifier = Modifier.fillMaxSize().padding(paddingValues).background(MaterialTheme.colorScheme.background)) {
+            if (isLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
 
             if (!isAdminLoggedIn) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = searchQuery,
-                            onValueChange = { searchQuery = it },
-                            label = { Text("Search Name, Brand, or Category...") },
-                            modifier = Modifier.weight(1f)
-                        )
-                        Button(
-                            onClick = { showEventHistoryDialog = true },
-                            modifier = Modifier.padding(top = 8.dp).height(40.dp),
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp)
-                        ) {
-                            Text("Events", style = MaterialTheme.typography.bodyMedium)
+                UserDashboard(
+                    searchQuery = searchQuery,
+                    onSearchQueryChange = { searchQuery = it },
+                    filteredProducts = filteredProducts,
+                    onEventHistoryRequested = { showEventHistoryDialog = true },
+                    onProductUpdated = { updatedProduct ->
+                        val idx = productsList.indexOfFirst { it.id == updatedProduct.id }
+                        if (idx != -1) {
+                            productsList[idx] = updatedProduct
+                            coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()) }
                         }
                     }
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    LazyColumn {
-                        val filteredList = productsList.filter {
-                            it.name.contains(searchQuery, ignoreCase = true) || 
-                            it.brand.contains(searchQuery, ignoreCase = true) ||
-                            it.category.contains(searchQuery, ignoreCase = true)
-                        }.sortedBy { it.name.lowercase() }
-                        items(filteredList) { product ->
-                            var showStockEditDialog by remember { mutableStateOf(false) }
-                            
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp)
-                                    .clickable { showStockEditDialog = true },
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                            ) {
-                                Column(modifier = Modifier.padding(16.dp)) {
-                                    Text(text = "${product.name} ${product.formattedSize}${product.unit} ${product.category}", style = MaterialTheme.typography.titleLarge)
-                                    Text(text = product.brand, style = MaterialTheme.typography.bodyMedium)
-                                    Text(text = "₱${product.price}", color = Color(0xFF00FF87), style = MaterialTheme.typography.titleMedium)
-                                    Text(text = "Stock Remaining: ${product.stock}", color = if(product.stock <= product.threshold) Color.Red else Color.White)
-                                }
-                            }
-
-                            if (showStockEditDialog) {
-                                var newStock by remember { mutableStateOf(product.stock.toString()) }
-                                var isSaving by remember { mutableStateOf(false) }
-                                
-                                AlertDialog(
-                                    onDismissRequest = { if (!isSaving) showStockEditDialog = false },
-                                    title = { Text("Update Stock: ${product.name}") },
-                                    text = {
-                                        OutlinedTextField(
-                                            value = newStock,
-                                            onValueChange = { if (it.all { char -> char.isDigit() }) newStock = it },
-                                            label = { Text("Current Stock") },
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    },
-                                    confirmButton = {
-                                        TextButton(
-                                            enabled = !isSaving,
-                                            onClick = {
-                                                val stockInt = newStock.toIntOrNull() ?: product.stock
-                                                isSaving = true
-                                                coroutineScope.launch {
-                                                    try {
-                                                        val updatedProduct = product.copy(stock = stockInt)
-                                                        val productRowData = listOf(
-                                                            updatedProduct.id, updatedProduct.name, updatedProduct.brand,
-                                                            updatedProduct.category, updatedProduct.unit, updatedProduct.size.toString(),
-                                                            updatedProduct.cost.toString(), updatedProduct.lastBoughtStore,
-                                                            updatedProduct.markupType, updatedProduct.markupValue.toString(),
-                                                            updatedProduct.price.toString(), updatedProduct.stock.toString(),
-                                                            updatedProduct.threshold.toString(),
-                                                            java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
-                                                        )
-                                                        val requestBody = mapOf("sheetName" to "Products", "action" to "update", "data" to productRowData)
-                                                        val response = com.example.gjstore.network.RetrofitClient.apiService.modifySheet(requestBody)
-                                                        
-                                                        if (response.isSuccessful || response.code() == 302) {
-                                                            val idx = productsList.indexOfFirst { it.id == product.id }
-                                                            if (idx != -1) productsList[idx] = updatedProduct
-                                                            
-                                                            // Update cache
-                                                            coroutineScope.launch(Dispatchers.IO) {
-                                                                File(context.filesDir, "products_cache.json").writeText(Gson().toJson(productsList.toList()))
-                                                            }
-                                                            
-                                                            Toast.makeText(context, "Stock updated!", Toast.LENGTH_SHORT).show()
-                                                            showStockEditDialog = false
-                                                        } else {
-                                                            Toast.makeText(context, "Sync failed.", Toast.LENGTH_SHORT).show()
-                                                        }
-                                                    } catch (e: Exception) {
-                                                        Toast.makeText(context, "Error updating stock.", Toast.LENGTH_SHORT).show()
-                                                    } finally {
-                                                        isSaving = false
-                                                    }
-                                                }
-                                            }
-                                        ) { Text("Update") }
-                                    },
-                                    dismissButton = {
-                                        TextButton(onClick = { showStockEditDialog = false }) { Text("Cancel") }
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
+                )
             } else {
                 AdminDashboard(
                     products = productsList,
@@ -473,332 +202,159 @@ fun MainAppScreen() {
                     eventsList = eventsList,
                     isEventsLoading = isEventsLoading,
                     currentAdminTab = currentAdminTab,
-                    onUpdateSheet = { targetProduct, executionAction ->
+                    onUpdateSheet = { targetProduct, action ->
                         coroutineScope.launch {
                             try {
-                                val productRowData = listOf(
-                                    targetProduct.id,
-                                    targetProduct.name,
-                                    targetProduct.brand,
-                                    targetProduct.category,
-                                    targetProduct.unit,
-                                    targetProduct.size.toString(),
-                                    targetProduct.cost.toString(),
-                                    targetProduct.lastBoughtStore,
-                                    targetProduct.markupType,
-                                    targetProduct.markupValue.toString(),
-                                    targetProduct.price.toString(),
-                                    targetProduct.stock.toString(),
-                                    targetProduct.threshold.toString(),
-                                    java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
-                                )
-
-                                Toast.makeText(context, "Syncing change with Google Sheets...", Toast.LENGTH_SHORT).show()
-
-                                val requestBody = mapOf(
-                                    "sheetName" to "Products",
-                                    "action" to executionAction,
-                                    "data" to productRowData
-                                )
-
-                                val response = com.example.gjstore.network.RetrofitClient.apiService.modifySheet(requestBody)
-
+                                val data = DataParser.productToRow(targetProduct)
+                                val response = RetrofitClient.apiService.modifySheet(mapOf("sheetName" to "Products", "action" to action, "data" to data))
                                 if (response.isSuccessful || response.code() == 302) {
-                                    val successMessage = when (executionAction) {
-                                        "add" -> "Product added successfully!"
-                                        "update" -> "Product updated successfully!"
-                                        "delete" -> "Product removed successfully!"
-                                        else -> "Google Sheet Sync Successful!"
-                                    }
-                                    
-                                    // Update cache
-                                    coroutineScope.launch(Dispatchers.IO) {
-                                        File(context.filesDir, "products_cache.json").writeText(Gson().toJson(productsList.toList()))
-                                    }
-                                    
-                                    Toast.makeText(context, successMessage, Toast.LENGTH_SHORT).show()
-                                } else {
-                                    Toast.makeText(context, "Cloud sync failed: ${response.message()}", Toast.LENGTH_SHORT).show()
+                                    withContext(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()) }
+                                    Toast.makeText(context, "Success", Toast.LENGTH_SHORT).show()
                                 }
-                            } catch (e: Exception) {
-                                e.printStackTrace()
-                                Toast.makeText(context, "Connection error: Data may not have saved.", Toast.LENGTH_SHORT).show()
-                            }
+                            } catch (e: Exception) { 
+                            withContext(Dispatchers.Main) { Toast.makeText(context, "Error", Toast.LENGTH_SHORT).show() }
+                        }
                         }
                     },
-                    onEditProductRequested = { product ->
-                        editingProduct = product
-                        showFormDialog = true
-                    }
+                    onEditProductRequested = { editingProduct = it; showFormDialog = true }
                 )
             }
         }
     }
 
-
-    if (showLoginDialog) {
-        var passwordInput by remember { mutableStateOf("") }
-        var isCheckingPassword by remember { mutableStateOf(false) }
-        var passwordVisible by remember { mutableStateOf(false) }
-
-        AlertDialog(
-            onDismissRequest = { if (!isCheckingPassword) showLoginDialog = false },
-            title = { Text("Admin Authentication") },
-            text = {
-                Column {
-                    OutlinedTextField(
-                        visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        value = passwordInput,
-                        onValueChange = { passwordInput = it },
-                        label = { Text("Enter Password") },
-                        singleLine = true,
-                        enabled = !isCheckingPassword,
-                        modifier = Modifier.fillMaxWidth(),
-                        trailingIcon = {
-                            val image = if (passwordVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff
-                            val description = if (passwordVisible) "Hide password" else "Show password"
-
-                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                                Icon(imageVector = image, contentDescription = description)
-                            }
-                        }
-                    )
-                    if (isCheckingPassword) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    }
+    // Dialogs
+    if (showLoginDialog) AdminLoginDialog(onDismiss = { showLoginDialog = false }, onLoginSuccess = { isAdminLoggedIn = true; showLoginDialog = false })
+    if (showEventDialog) EventEntryDialog(onDismiss = { showEventDialog = false }, onSave = { event ->
+        coroutineScope.launch {
+            try {
+                val data = listOf(event.date, event.details, event.amount.toString())
+                val response = RetrofitClient.apiService.modifySheet(mapOf("sheetName" to "Events", "action" to "add", "data" to data))
+                if (response.isSuccessful || response.code() == 302) {
+                    eventsList.add(0, event)
+                    withContext(Dispatchers.IO) { CacheManager.saveEvents(context, eventsList.toList()) }
                 }
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = !isCheckingPassword,
-                    onClick = {
-                        if (passwordInput.isEmpty()) return@TextButton
-                        isCheckingPassword = true
-                        coroutineScope.launch {
-                            try {
-                                val response = com.example.gjstore.network.RetrofitClient.apiService.readSheet(sheetName = "Admin")
-                                if (response.isSuccessful && response.body() != null) {
-                                    val rawRows = response.body()!!
-                                    if (rawRows.size > 1 && rawRows[1].isNotEmpty() && passwordInput == rawRows[1][0]) {
-                                        isAdminLoggedIn = true
-                                        showLoginDialog = false
-                                    } else {
-                                        Toast.makeText(context, "Access Denied.", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                Toast.makeText(context, "Connection Error.", Toast.LENGTH_SHORT).show()
-                            } finally {
-                                isCheckingPassword = false
-                            }
-                        }
-                    }
-                ) { Text("Login") }
-            },
-            dismissButton = { TextButton(onClick = { showLoginDialog = false }) { Text("Cancel") } }
-        )
-    }
-
-    if (showEventDialog) {
-        EventEntryDialog(
-            onDismiss = { showEventDialog = false },
-            onSave = { event ->
-                coroutineScope.launch {
-                    try {
-                        val requestBody = mapOf(
-                            "sheetName" to "Events",
-                            "action" to "add",
-                            "data" to listOf(event.date, event.details, event.amount.toString())
-                        )
-                        val response = com.example.gjstore.network.RetrofitClient.apiService.modifySheet(requestBody)
-                        if (response.isSuccessful || response.code() == 302) {
-                            eventsList.add(0, event) // Add to local list immediately
-                            
-                            // Update cache
-                            coroutineScope.launch(Dispatchers.IO) {
-                                File(context.filesDir, "events_cache.json").writeText(Gson().toJson(eventsList.toList()))
-                            }
-                            
-                            Toast.makeText(context, "Event recorded successfully!", Toast.LENGTH_SHORT).show()
-                        } else {
-                            Toast.makeText(context, "Failed to record event.", Toast.LENGTH_SHORT).show()
-                        }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                        Toast.makeText(context, "Network error while saving event.", Toast.LENGTH_SHORT).show()
-                    }
-                }
-                showEventDialog = false
-            }
-        )
-    }
-
-    if (showEventHistoryDialog) {
-        EmployeeEventHistoryDialog(
-            events = eventsList,
-            isLoading = isEventsLoading,
-            onDismiss = { showEventHistoryDialog = false },
-            onAddRequested = {
-                showEventDialog = true
-            }
-        )
-    }
-
-    if (showFormDialog) {
-        AdminProductFormDialog(
-            product = editingProduct,
-            settings = dynamicSettings,
-            onDismiss = { showFormDialog = false },
-            onSave = { finalizedProduct ->
-                if (editingProduct == null) {
-                    productsList.add(finalizedProduct)
-                    coroutineScope.launch {
-                        try {
-                            val productRowData = listOf(
-                                finalizedProduct.id, finalizedProduct.name, finalizedProduct.brand,
-                                finalizedProduct.category, finalizedProduct.unit, finalizedProduct.size.toString(),
-                                finalizedProduct.cost.toString(), finalizedProduct.lastBoughtStore,
-                                finalizedProduct.markupType, finalizedProduct.markupValue.toString(),
-                                finalizedProduct.price.toString(), finalizedProduct.stock.toString(),
-                                finalizedProduct.threshold.toString(),
-                                java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
-                            )
-                            val requestBody = mapOf("sheetName" to "Products", "action" to "add", "data" to productRowData)
-                            com.example.gjstore.network.RetrofitClient.apiService.modifySheet(requestBody)
-                        } catch (e: Exception) { e.printStackTrace() }
-                    }
-                } else {
-                    val index = productsList.indexOfFirst { it.id == finalizedProduct.id }
-                    if (index != -1) productsList[index] = finalizedProduct
-                    coroutineScope.launch {
-                        try {
-                            val productRowData = listOf(
-                                finalizedProduct.id, finalizedProduct.name, finalizedProduct.brand,
-                                finalizedProduct.category, finalizedProduct.unit, finalizedProduct.size.toString(),
-                                finalizedProduct.cost.toString(), finalizedProduct.lastBoughtStore,
-                                finalizedProduct.markupType, finalizedProduct.markupValue.toString(),
-                                finalizedProduct.price.toString(), finalizedProduct.stock.toString(),
-                                finalizedProduct.threshold.toString(),
-                                java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
-                            )
-                            val requestBody = mapOf("sheetName" to "Products", "action" to "update", "data" to productRowData)
-                            com.example.gjstore.network.RetrofitClient.apiService.modifySheet(requestBody)
-                        } catch (e: Exception) { e.printStackTrace() }
-                    }
-                }
-                showFormDialog = false
-            }
-        )
-    }
-}
-
-@Composable
-fun EmployeeEventHistoryDialog(
-    events: List<com.example.gjstore.data.Event>,
-    isLoading: Boolean,
-    onDismiss: () -> Unit,
-    onAddRequested: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { 
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Event History")
-                TextButton(onClick = onAddRequested) {
-                    Text("+ Add New")
-                }
-            }
-        },
-        text = {
-            Column(modifier = Modifier.fillMaxHeight(0.7f)) {
-                if (isLoading) {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                }
-                if (events.isEmpty() && !isLoading) {
-                    Text("No events recorded yet.", modifier = Modifier.padding(16.dp))
-                }
-                LazyColumn {
-                    items(events) { event ->
-                        Card(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                        ) {
-                            Column(modifier = Modifier.padding(8.dp)) {
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text(text = event.date.substringBefore("GMT").substringBefore("standard").trim(), style = MaterialTheme.typography.labelSmall)
-                                    Text(
-                                        text = "₱${event.amount}", 
-                                        style = MaterialTheme.typography.bodyMedium, 
-                                        color = if (event.amount < 0) Color.Red else Color(0xFF00FF87)
-                                    )
-                                }
-                                Text(text = event.details, style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Close") }
+            } catch (e: Exception) { Toast.makeText(context, "Error", Toast.LENGTH_SHORT).show() }
         }
-    )
+        showEventDialog = false
+    })
+    if (showEventHistoryDialog) EmployeeEventHistoryDialog(events = eventsList, isLoading = isEventsLoading, onDismiss = { showEventHistoryDialog = false }, onAddRequested = { showEventDialog = true })
+    if (showFormDialog) AdminProductFormDialog(product = editingProduct, settings = dynamicSettings, onDismiss = { showFormDialog = false }, onSave = { finalizedProduct ->
+        if (editingProduct == null) productsList.add(finalizedProduct)
+        else {
+            val index = productsList.indexOfFirst { it.id == finalizedProduct.id }
+            if (index != -1) productsList[index] = finalizedProduct
+        }
+        coroutineScope.launch {
+            try {
+                val action = if (editingProduct == null) "add" else "update"
+                val data = DataParser.productToRow(finalizedProduct)
+                RetrofitClient.apiService.modifySheet(mapOf("sheetName" to "Products", "action" to action, "data" to data))
+                withContext(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()) }
+            } catch (e: Exception) { e.printStackTrace() }
+        }
+        showFormDialog = false
+    })
 }
 
 @Composable
-fun EventEntryDialog(onDismiss: () -> Unit, onSave: (com.example.gjstore.data.Event) -> Unit) {
-    var details by remember { mutableStateOf("") }
-    var amountText by remember { mutableStateOf("") }
-    var isExpense by remember { mutableStateOf(true) }
-    val date = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+fun UserDashboard(
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+    filteredProducts: List<Product>,
+    onEventHistoryRequested: () -> Unit,
+    onProductUpdated: (Product) -> Unit
+) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
+    Column(modifier = Modifier.padding(16.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(value = searchQuery, onValueChange = onSearchQueryChange, label = { Text("Search...") }, modifier = Modifier.weight(1f))
+            Button(onClick = onEventHistoryRequested, modifier = Modifier.padding(top = 8.dp).height(40.dp)) { Text("Events") }
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+        LazyColumn {
+            items(filteredProducts) { product ->
+                var showStockEditDialog by remember { mutableStateOf(false) }
+                Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { showStockEditDialog = true }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(text = "${product.name} ${product.formattedSize}${product.unit} ${product.category}", style = MaterialTheme.typography.titleLarge)
+                        Text(text = product.brand, style = MaterialTheme.typography.bodyMedium)
+                        Text(text = "₱${product.price}", color = Color(0xFF00FF87), style = MaterialTheme.typography.titleMedium)
+                        Text(text = "Stock: ${product.stock}", color = if (product.stock <= product.threshold) Color.Red else Color.White)
+                    }
+                }
+                if (showStockEditDialog) {
+                    var newStock by remember { mutableStateOf(product.stock.toString()) }
+                    var isSaving by remember { mutableStateOf(false) }
+                    AlertDialog(
+                        onDismissRequest = { if (!isSaving) showStockEditDialog = false },
+                        title = { Text("Update Stock: ${product.name}") },
+                        text = { OutlinedTextField(value = newStock, onValueChange = { if (it.all { c -> c.isDigit() }) newStock = it }, label = { Text("Current Stock") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth()) },
+                        confirmButton = {
+                            TextButton(enabled = !isSaving, onClick = {
+                                val stockInt = newStock.toIntOrNull() ?: product.stock
+                                isSaving = true
+                                coroutineScope.launch {
+                                    try {
+                                        val updated = product.copy(stock = stockInt)
+                                        val data = DataParser.productToRow(updated)
+                                        val response = RetrofitClient.apiService.modifySheet(mapOf("sheetName" to "Products", "action" to "update", "data" to data))
+                                        if (response.isSuccessful || response.code() == 302) {
+                                            onProductUpdated(updated)
+                                            showStockEditDialog = false
+                                        }
+                                    } catch (e: Exception) { Toast.makeText(context, "Error", Toast.LENGTH_SHORT).show() }
+                                    finally { isSaving = false }
+                                }
+                            }) { Text("Update") }
+                        },
+                        dismissButton = { TextButton(onClick = { showStockEditDialog = false }) { Text("Cancel") } }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AdminLoginDialog(onDismiss: () -> Unit, onLoginSuccess: () -> Unit) {
+    var passwordInput by remember { mutableStateOf("") }
+    var isChecking by remember { mutableStateOf(false) }
+    var visible by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Add New Event") },
+        onDismissRequest = { if (!isChecking) onDismiss() },
+        title = { Text("Admin Login") },
         text = {
             Column {
-                Text("Date: $date", style = MaterialTheme.typography.bodyMedium)
-                Spacer(modifier = Modifier.height(8.dp))
-                
-                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    RadioButton(selected = isExpense, onClick = { isExpense = true })
-                    Text("Expense (-)")
-                    Spacer(modifier = Modifier.width(16.dp))
-                    RadioButton(selected = !isExpense, onClick = { isExpense = false })
-                    Text("Addition (+)")
-                }
-                
-                Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
-                    value = details,
-                    onValueChange = { details = it },
-                    label = { Text("Event Details") },
+                    value = passwordInput,
+                    onValueChange = { passwordInput = it },
+                    label = { Text("Password") },
+                    visualTransformation = if (visible) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = { IconButton(onClick = { visible = !visible }) { Icon(if (visible) Icons.Default.Visibility else Icons.Default.VisibilityOff, null) } },
                     modifier = Modifier.fillMaxWidth()
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = amountText,
-                    onValueChange = { amountText = it },
-                    label = { Text("Amount (₱)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth()
-                )
+                if (isChecking) LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
             }
         },
         confirmButton = {
-            Button(onClick = {
-                var amount = amountText.toDoubleOrNull() ?: 0.0
-                if (isExpense && amount > 0) amount = -amount
-                onSave(com.example.gjstore.data.Event(date, details, amount))
-            }) {
-                Text("Save Event")
-            }
+            TextButton(enabled = !isChecking, onClick = {
+                isChecking = true
+                scope.launch {
+                    try {
+                        val response = RetrofitClient.apiService.readSheet("Admin")
+                        if (response.isSuccessful && response.body()?.getOrNull(1)?.getOrNull(0) == passwordInput) onLoginSuccess()
+                        else Toast.makeText(context, "Denied", Toast.LENGTH_SHORT).show()
+                    } catch (e: Exception) { Toast.makeText(context, "Error", Toast.LENGTH_SHORT).show() }
+                    finally { isChecking = false }
+                }
+            }) { Text("Login") }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        }
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
 
@@ -806,7 +362,7 @@ fun EventEntryDialog(onDismiss: () -> Unit, onSave: (com.example.gjstore.data.Ev
 fun AdminDashboard(
     products: MutableList<Product>,
     settings: DropdownSettings,
-    eventsList: MutableList<com.example.gjstore.data.Event>,
+    eventsList: MutableList<Event>,
     isEventsLoading: Boolean,
     currentAdminTab: Int,
     onUpdateSheet: (Product, String) -> Unit,
@@ -814,15 +370,8 @@ fun AdminDashboard(
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         when (currentAdminTab) {
-            0 -> AdminProductList(
-                products = products,
-                onEditRequested = onEditProductRequested,
-                onDeleteRequested = { product ->
-                    products.remove(product)
-                    onUpdateSheet(product, "delete")
-                }
-            )
-            1 -> ShouldRebuyScreen(products = products)
+            0 -> AdminProductList(products, onEditProductRequested, { p -> products.remove(p); onUpdateSheet(p, "delete") })
+            1 -> ShouldRebuyScreen(products)
             2 -> DropdownSettingsManager(settings)
             3 -> AdminEventsScreen(eventsList, isEventsLoading)
         }
@@ -830,628 +379,270 @@ fun AdminDashboard(
 }
 
 @Composable
-fun AdminProductList(
-    products: List<Product>,
-    onEditRequested: (Product) -> Unit,
-    onDeleteRequested: (Product) -> Unit
-) {
-    var adminSearchQuery by remember { mutableStateOf("") }
-
+fun AdminProductList(products: List<Product>, onEdit: (Product) -> Unit, onDelete: (Product) -> Unit) {
+    var query by remember { mutableStateOf("") }
+    val filtered by remember { derivedStateOf { products.filter { it.name.contains(query, true) || it.brand.contains(query, true) }.sortedBy { it.name.lowercase() } } }
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        OutlinedTextField(
-            value = adminSearchQuery,
-            onValueChange = { adminSearchQuery = it },
-            label = { Text("Search Inventory (Admin Mode)") },
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-
+        OutlinedTextField(value = query, onValueChange = { query = it }, label = { Text("Search Inventory") }, modifier = Modifier.fillMaxWidth())
         LazyColumn {
-            val filteredList = products.filter {
-                it.name.contains(adminSearchQuery, ignoreCase = true) || 
-                it.brand.contains(adminSearchQuery, ignoreCase = true) ||
-                it.category.contains(adminSearchQuery, ignoreCase = true)
-            }.sortedBy { it.name.lowercase() }
-            items(filteredList) { product ->
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
+            items(filtered) { product ->
+                Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                    Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "${product.name} ${product.formattedSize}${product.unit} ${product.category}", style = MaterialTheme.typography.titleLarge)
-                            Text(text = product.brand, style = MaterialTheme.typography.bodyMedium)
-                            Text(text = "Price: ₱${product.price} (Cost: ₱${product.cost})", color = Color(0xFF00FF87), style = MaterialTheme.typography.titleMedium)
-                            Text(text = "Stock Remaining: ${product.stock}", color = if(product.stock <= product.threshold) Color.Red else Color.White)
-                            if (product.date.isNotBlank()) {
-                                Text(text = "Last Modified: ${product.date.substringBefore("GMT").substringBefore("standard").trim()}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-                            }
+                            Text(text = "${product.name} ${product.formattedSize}${product.unit}", style = MaterialTheme.typography.titleLarge)
+                            Text(text = "Price: ₱${product.price} (Cost: ₱${product.cost})", color = Color(0xFF00FF87))
+                            Text(text = "Stock: ${product.stock}")
                         }
                         Row {
-                            IconButton(onClick = { onEditRequested(product) }) {
-                                Icon(Icons.Default.Edit, contentDescription = "Edit", tint = Color(0xFFFF7D1E))
-                            }
-                            IconButton(onClick = { onDeleteRequested(product) }) {
-                                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red)
-                            }
+                            IconButton(onClick = { onEdit(product) }) { Icon(Icons.Default.Edit, null, tint = Color(0xFFFF7D1E)) }
+                            IconButton(onClick = { onDelete(product) }) { Icon(Icons.Default.Delete, null, tint = Color.Red) }
                         }
                     }
                 }
             }
         }
     }
-
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AdminProductFormDialog(
-    product: Product?,
-    settings: DropdownSettings,
-    onDismiss: () -> Unit,
-    onSave: (Product) -> Unit
-) {
+fun AdminProductFormDialog(product: Product?, settings: DropdownSettings, onDismiss: () -> Unit, onSave: (Product) -> Unit) {
     var name by remember { mutableStateOf(product?.name ?: "") }
     var size by remember { mutableStateOf(product?.size?.toString() ?: "") }
     var cost by remember { mutableStateOf(product?.cost?.toString() ?: "") }
-    var markupVal by remember { mutableStateOf(product?.markupValue?.toString() ?: "") }
+    var mVal by remember { mutableStateOf(product?.markupValue?.toString() ?: "") }
     var stock by remember { mutableStateOf(product?.stock?.toString() ?: "") }
-    var threshold by remember { mutableStateOf(product?.threshold?.toString() ?: "") }
-
-    var selectedBrand by remember { mutableStateOf(product?.brand ?: "") }
-    var selectedCategory by remember { mutableStateOf(product?.category ?: "") }
-    var selectedUnit by remember { mutableStateOf(product?.unit ?: "") }
-    var selectedStore by remember { mutableStateOf(product?.lastBoughtStore ?: "") }
-    var selectedMarkupType by remember { mutableStateOf(product?.markupType ?: "Percentage") }
-
-    var brandMenuExpanded by remember { mutableStateOf(false) }
-    var categoryMenuExpanded by remember { mutableStateOf(false) }
-    var unitMenuExpanded by remember { mutableStateOf(false) }
-    var storeMenuExpanded by remember { mutableStateOf(false) }
+    var thresh by remember { mutableStateOf(product?.threshold?.toString() ?: "") }
+    var brand by remember { mutableStateOf(product?.brand ?: "") }
+    var cat by remember { mutableStateOf(product?.category ?: "") }
+    var unit by remember { mutableStateOf(product?.unit ?: "") }
+    var store by remember { mutableStateOf(product?.lastBoughtStore ?: "") }
+    var mType by remember { mutableStateOf(product?.markupType ?: "Percentage") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (product == null) "Add New Product" else "Edit Product Details") },
+        title = { Text(if (product == null) "Add Product" else "Edit Product") },
         text = {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 item {
-                    OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Product Name") }, modifier = Modifier.fillMaxWidth())
-
-                    // BRAND
-                    ExposedDropdownMenuBox(
-                        expanded = brandMenuExpanded,
-                        onExpandedChange = { brandMenuExpanded = !brandMenuExpanded },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = selectedBrand,
-                            onValueChange = { 
-                                selectedBrand = it
-                                brandMenuExpanded = true 
-                            },
-                            label = { Text("Brand") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = brandMenuExpanded) },
-                            modifier = Modifier.menuAnchor()
-                        )
-                        val filteredBrands = settings.brands.filter { it.contains(selectedBrand, ignoreCase = true) }
-                        if (filteredBrands.isNotEmpty()) {
-                            ExposedDropdownMenu(
-                                expanded = brandMenuExpanded,
-                                onDismissRequest = { brandMenuExpanded = false }
-                            ) {
-                                filteredBrands.forEach { brand ->
-                                    DropdownMenuItem(
-                                        text = { Text(brand) },
-                                        onClick = {
-                                            selectedBrand = brand
-                                            brandMenuExpanded = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // CATEGORY
-                    ExposedDropdownMenuBox(
-                        expanded = categoryMenuExpanded,
-                        onExpandedChange = { categoryMenuExpanded = !categoryMenuExpanded },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = selectedCategory,
-                            onValueChange = { 
-                                selectedCategory = it
-                                categoryMenuExpanded = true 
-                            },
-                            label = { Text("Category") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryMenuExpanded) },
-                            modifier = Modifier.menuAnchor()
-                        )
-                        val filteredCategories = settings.categories.filter { it.contains(selectedCategory, ignoreCase = true) }
-                        if (filteredCategories.isNotEmpty()) {
-                            ExposedDropdownMenu(
-                                expanded = categoryMenuExpanded,
-                                onDismissRequest = { categoryMenuExpanded = false }
-                            ) {
-                                filteredCategories.forEach { category ->
-                                    DropdownMenuItem(
-                                        text = { Text(category) },
-                                        onClick = {
-                                            selectedCategory = category
-                                            categoryMenuExpanded = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // UNIT
-                    ExposedDropdownMenuBox(
-                        expanded = unitMenuExpanded,
-                        onExpandedChange = { unitMenuExpanded = !unitMenuExpanded },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = selectedUnit,
-                            onValueChange = { 
-                                selectedUnit = it
-                                unitMenuExpanded = true 
-                            },
-                            label = { Text("Unit") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = unitMenuExpanded) },
-                            modifier = Modifier.menuAnchor()
-                        )
-                        val filteredUnits = settings.units.filter { it.contains(selectedUnit, ignoreCase = true) }
-                        if (filteredUnits.isNotEmpty()) {
-                            ExposedDropdownMenu(
-                                expanded = unitMenuExpanded,
-                                onDismissRequest = { unitMenuExpanded = false }
-                            ) {
-                                filteredUnits.forEach { unit ->
-                                    DropdownMenuItem(
-                                        text = { Text(unit) },
-                                        onClick = {
-                                            selectedUnit = unit
-                                            unitMenuExpanded = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-
+                    OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
+                    DropdownField("Brand", brand, settings.brands) { brand = it }
+                    DropdownField("Category", cat, settings.categories) { cat = it }
+                    DropdownField("Unit", unit, settings.units) { unit = it }
                     OutlinedTextField(value = size, onValueChange = { size = it }, label = { Text("Size") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(value = cost, onValueChange = { cost = it }, label = { Text("Cost Price") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-
-                    Text("Markup Type Selection:", modifier = Modifier.padding(top = 8.dp))
+                    OutlinedTextField(value = cost, onValueChange = { cost = it }, label = { Text("Cost") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
                     Row {
-                        Row(modifier = Modifier.clickable { selectedMarkupType = "Percentage" }) {
-                            RadioButton(selected = selectedMarkupType == "Percentage", onClick = { selectedMarkupType = "Percentage" })
-                            Text("Percentage (%)", modifier = Modifier.padding(start = 4.dp, top = 2.dp))
-                        }
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Row(modifier = Modifier.clickable { selectedMarkupType = "Fixed" }) {
-                            RadioButton(selected = selectedMarkupType == "Fixed", onClick = { selectedMarkupType = "Fixed" })
-                            Text("Fixed (₱)", modifier = Modifier.padding(start = 4.dp, top = 2.dp))
-                        }
+                        RadioButton(mType == "Percentage", { mType = "Percentage" }); Text(" % ")
+                        RadioButton(mType == "Fixed", { mType = "Fixed" }); Text(" ₱ ")
                     }
-
-                    OutlinedTextField(value = markupVal, onValueChange = { markupVal = it }, label = { Text("Markup Value") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-
-                    val calculatedPrice = remember(cost, markupVal, selectedMarkupType) {
-                        val c = cost.toDoubleOrNull() ?: 0.0
-                        val m = markupVal.toDoubleOrNull() ?: 0.0
-                        val raw = if (selectedMarkupType == "Percentage") c * (1 + (m / 100)) else c + m
-                        kotlin.math.ceil(raw)
-                    }
-                    Text("Calculated Selling Price: ₱$calculatedPrice", color = Color(0xFF00FF87), modifier = Modifier.padding(vertical = 4.dp))
-
-                    OutlinedTextField(value = stock, onValueChange = { stock = it }, label = { Text("Stock Level") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(value = threshold, onValueChange = { threshold = it }, label = { Text("Low Stock Warning Limit") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-
-                    // LAST BOUGHT STORE
-                    ExposedDropdownMenuBox(
-                        expanded = storeMenuExpanded,
-                        onExpandedChange = { storeMenuExpanded = !storeMenuExpanded },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = selectedStore,
-                            onValueChange = { 
-                                selectedStore = it
-                                storeMenuExpanded = true 
-                            },
-                            label = { Text("Last Bought Store") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = storeMenuExpanded) },
-                            modifier = Modifier.menuAnchor()
-                        )
-                        val filteredStores = settings.stores.filter { it.contains(selectedStore, ignoreCase = true) }
-                        if (filteredStores.isNotEmpty()) {
-                            ExposedDropdownMenu(
-                                expanded = storeMenuExpanded,
-                                onDismissRequest = { storeMenuExpanded = false }
-                            ) {
-                                filteredStores.forEach { store ->
-                                    DropdownMenuItem(
-                                        text = { Text(store) },
-                                        onClick = {
-                                            selectedStore = store
-                                            storeMenuExpanded = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
+                    OutlinedTextField(value = mVal, onValueChange = { mVal = it }, label = { Text("Markup") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = stock, onValueChange = { stock = it }, label = { Text("Stock") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = thresh, onValueChange = { thresh = it }, label = { Text("Threshold") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                    DropdownField("Store", store, settings.stores) { store = it }
                 }
             }
         },
         confirmButton = {
             Button(onClick = {
-                val finalized = Product(
-                    id = product?.id ?: System.currentTimeMillis().toString(),
-                    name = name, brand = selectedBrand, category = selectedCategory, unit = selectedUnit,
-                    size = size.toDoubleOrNull() ?: 0.0, cost = cost.toDoubleOrNull() ?: 0.0,
-                    lastBoughtStore = selectedStore, markupType = selectedMarkupType, markupValue = markupVal.toDoubleOrNull() ?: 0.0,
-                    stock = stock.toIntOrNull() ?: 0, threshold = threshold.toIntOrNull() ?: 0,
-                    date = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
-                )
-                onSave(finalized)
+                onSave(Product(product?.id ?: System.currentTimeMillis().toString(), name, brand, cat, unit, size.toDoubleOrNull() ?: 0.0, cost.toDoubleOrNull() ?: 0.0, store, mType, mVal.toDoubleOrNull() ?: 0.0, 0.0, stock.toIntOrNull() ?: 0, thresh.toIntOrNull() ?: 0, SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())))
             }) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ShouldRebuyScreen(products: List<Product>) {
-    val reorderManifestList = products.filter { it.stock <= it.threshold }
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        LazyColumn(modifier = Modifier.weight(1f)) {
-            items(reorderManifestList) { product ->
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0x33FF0000))
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(product.name, style = MaterialTheme.typography.titleSmall)
-                            Text("${product.brand} | ${product.lastBoughtStore}", style = MaterialTheme.typography.bodySmall)
-                            Text("Last Cost: ₱${product.cost}", style = MaterialTheme.typography.labelSmall)
-                        }
-                        Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
-                            Text("${product.stock} / ${product.threshold}", color = Color.Red, style = MaterialTheme.typography.titleSmall)
-                            Text("Stock/Min", style = MaterialTheme.typography.labelSmall, color = Color.LightGray)
-                        }
-                    }
-                }
+fun DropdownField(label: String, value: String, options: List<String>, onValueChange: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }, modifier = Modifier.fillMaxWidth()) {
+        OutlinedTextField(value = value, onValueChange = { onValueChange(it); expanded = true }, label = { Text(label) }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }, modifier = Modifier.menuAnchor())
+        val filtered = options.filter { it.contains(value, true) }
+        if (filtered.isNotEmpty()) {
+            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                filtered.forEach { DropdownMenuItem(text = { Text(it) }, onClick = { onValueChange(it); expanded = false }) }
             }
         }
-        val context = LocalContext.current
-
-        Button(
-            onClick = {
-                try {
-                    val fileName = "GJStore_Rebuy_Manifest_${System.currentTimeMillis()}.txt"
-                    val manifestText = StringBuilder().apply {
-                        append("GJSTORE REBUY MANIFEST\n")
-                        append("=======================\n\n")
-                        reorderManifestList.forEach { item ->
-                            append("- ${item.name} (${item.brand}) -> Current Stock: ${item.stock} (Threshold: ${item.threshold}) | Last Cost: ₱${item.cost}\n")
-                        }
-                    }.toString()
-
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        val contentValues = ContentValues().apply {
-                            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                            put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
-                            put(MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
-                        }
-
-                        val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
-                        uri?.let {
-                            context.contentResolver.openOutputStream(it)?.use { stream ->
-                                stream.write(manifestText.toByteArray())
-                            }
-                            Toast.makeText(context, "Manifest saved to Downloads!", Toast.LENGTH_LONG).show()
-                        }
-                    } else {
-                        // For older Android versions
-                        val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
-                        val file = File(downloadsDir, fileName)
-                        file.writeText(manifestText)
-                        Toast.makeText(context, "Manifest saved to Downloads!", Toast.LENGTH_LONG).show()
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    Toast.makeText(context, "Failed to export file: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
-                }
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Generate Order Manifest File (.txt)")
-        }
     }
-
 }
 
 @Composable
-fun AdminEventsScreen(events: List<com.example.gjstore.data.Event>, isLoading: Boolean) {
-    if (isLoading) {
-        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+fun ShouldRebuyScreen(products: List<Product>) {
+    val list = products.filter { it.stock <= it.threshold }
+    val context = LocalContext.current
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        LazyColumn(modifier = Modifier.weight(1f)) {
+            items(list) { p ->
+                Card(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), colors = CardDefaults.cardColors(containerColor = Color(0x33FF0000))) {
+                    Row(modifier = Modifier.padding(12.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column { Text(p.name); Text("${p.brand} | ${p.lastBoughtStore}", style = MaterialTheme.typography.bodySmall) }
+                        Text("${p.stock} / ${p.threshold}", color = Color.Red)
+                    }
+                }
+            }
+        }
+        Button(onClick = { exportManifest(context, list) }, modifier = Modifier.fillMaxWidth()) { Text("Export Manifest (.txt)") }
     }
+}
+
+fun exportManifest(context: Context, list: List<Product>) {
+    try {
+        val fileName = "Manifest_${System.currentTimeMillis()}.txt"
+        val text = StringBuilder("REBUY MANIFEST\n\n").apply { list.forEach { append("- ${it.name} (${it.brand}) Stock: ${it.stock}/${it.threshold}\n") } }.toString()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply { put(MediaStore.MediaColumns.DISPLAY_NAME, fileName); put(MediaStore.MediaColumns.MIME_TYPE, "text/plain"); put(MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS) }
+            context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)?.let { uri -> context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }; Toast.makeText(context, "Saved", Toast.LENGTH_SHORT).show() }
+        } else {
+            val file = File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), fileName)
+            file.writeText(text); Toast.makeText(context, "Saved", Toast.LENGTH_SHORT).show()
+        }
+    } catch (e: Exception) { Toast.makeText(context, "Failed", Toast.LENGTH_SHORT).show() }
+}
+
+@Composable
+fun AdminEventsScreen(events: List<Event>, isLoading: Boolean) {
+    if (isLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
     LazyColumn(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        items(events) { event ->
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-            ) {
+        items(events) { e ->
+            Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(text = event.date.substringBefore("GMT").substringBefore("standard").trim(), style = MaterialTheme.typography.labelMedium)
-                        Text(text = "₱${event.amount}", style = MaterialTheme.typography.titleMedium, color = if (event.amount < 0) Color.Red else Color(0xFF00FF87))
+                        Text(e.date, style = MaterialTheme.typography.labelMedium)
+                        Text("₱${e.amount}", color = if (e.amount < 0) Color.Red else Color(0xFF00FF87))
                     }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(text = event.details, style = MaterialTheme.typography.bodyLarge)
+                    Text(e.details)
                 }
             }
         }
     }
-
 }
 
 @Composable
 fun DropdownSettingsManager(settings: DropdownSettings) {
-    var subTabState by remember { mutableStateOf(0) }
-    val sections = listOf("Brands", "Categories", "Units", "Stores", "Messenger Keys")
-
-    var entryInputText by remember { mutableStateOf("") }
-    var editingIndex by remember { mutableStateOf(-1) }
-    var oldValueForUpdate by remember { mutableStateOf("") }
-
-    val coroutineScope = rememberCoroutineScope()
+    var subTab by remember { mutableIntStateOf(0) }
+    val sections = listOf("Brands", "Categories", "Units", "Stores", "Messenger")
+    var input by remember { mutableStateOf("") }
+    var editIdx by remember { mutableIntStateOf(-1) }
+    var oldVal by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
     val context = LocalContext.current
-
-    // Explicitly resolve the list based on state to ensure observability
-    val currentWorkingList = when(subTabState) {
-        0 -> settings.brands
-        1 -> settings.categories
-        2 -> settings.units
-        3 -> settings.stores
-        else -> settings.messengerKeys
-    }
+    val list = when(subTab) { 0 -> settings.brands; 1 -> settings.categories; 2 -> settings.units; 3 -> settings.stores; else -> settings.messengerKeys }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-        ) {
-            ScrollableTabRow(
-                selectedTabIndex = subTabState,
-                edgePadding = 0.dp,
-                modifier = Modifier.weight(1f)
-            ) {
-                sections.forEachIndexed { index, title ->
-                    Tab(selected = subTabState == index, onClick = {
-                        subTabState = index
-                        entryInputText = ""
-                        editingIndex = -1
-                        oldValueForUpdate = ""
-                    }, text = { Text(title) })
-                }
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            ScrollableTabRow(selectedTabIndex = subTab, edgePadding = 0.dp, modifier = Modifier.weight(1f)) {
+                sections.forEachIndexed { i, t -> Tab(subTab == i, { subTab = i; input = ""; editIdx = -1 }, text = { Text(t) }) }
             }
-            
-            IconButton(onClick = {
-                coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                    try {
-                        // Updated to look in the 'release' folder which we will stop ignoring
-                        val apkUrl = "https://raw.githubusercontent.com/insomniaczxz/GJStore/main/release/app-debug.apk"
-                        val connection = URL(apkUrl).openConnection() as HttpURLConnection
-                        connection.connect()
-                        
-                        if (connection.responseCode == 200) {
-                            val apkFile = File(context.cacheDir, "update.apk")
-                            connection.inputStream.use { input ->
-                                apkFile.outputStream().use { output ->
-                                    input.copyTo(output)
-                                }
+            IconButton(onClick = { updateApp(context, scope) }) { Icon(Icons.Default.SystemUpdate, null, tint = Color(0xFFFF7D1E)) }
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+        Row {
+            OutlinedTextField(input, { input = it }, label = { Text(if (editIdx == -1) "Add" else "Update") }, modifier = Modifier.weight(1f))
+            Button(onClick = {
+                if (input.isNotBlank()) {
+                    val newVal = input.trim()
+                    scope.launch {
+                        try {
+                            val payload = MutableList(5) { "" }.apply { set(subTab, newVal) }
+                            val action = if (editIdx == -1) "add" else "update"
+                            val body = mutableMapOf<String, Any>("sheetName" to "Settings", "action" to action, "data" to payload)
+                            if (editIdx != -1) body["oldData"] = MutableList(5) { "" }.apply { set(subTab, oldVal) }
+                            val res = RetrofitClient.apiService.modifySheet(body)
+                            if (res.isSuccessful || res.code() == 302) {
+                                if (editIdx == -1) { if (!list.contains(newVal)) list.add(newVal) }
+                                else { list[editIdx] = newVal; editIdx = -1 }
+                                input = ""; withContext(Dispatchers.IO) { CacheManager.saveSettings(context, settings) }
                             }
-                            
-                            val contentUri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
-                            val installIntent = Intent(Intent.ACTION_VIEW).apply {
-                                setDataAndType(contentUri, "application/vnd.android.package-archive")
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                            }
-                            context.startActivity(installIntent)
-                        } else {
-                            coroutineScope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                                Toast.makeText(context, "Update not found on GitHub.", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                        coroutineScope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                            Toast.makeText(context, "Failed to download update.", Toast.LENGTH_SHORT).show()
-                        }
+                        } catch (e: Exception) { Toast.makeText(context, "Error", Toast.LENGTH_SHORT).show() }
                     }
                 }
-            }) {
-                Icon(Icons.Default.SystemUpdate, contentDescription = "Update App", tint = Color(0xFFFF7D1E))
-            }
+            }, modifier = Modifier.padding(top = 4.dp)) { Text(if (editIdx == -1) "Add" else "Update") }
         }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Row(modifier = Modifier.fillMaxWidth()) {
-            OutlinedTextField(
-                value = entryInputText,
-                onValueChange = { entryInputText = it },
-                label = { Text(if (editingIndex == -1) "Add New to ${sections[subTabState]}" else "Modify Selection") },
-                modifier = Modifier.weight(1f)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Button(
-                onClick = {
-                    if (entryInputText.isNotBlank()) {
-                        val targetedValue = entryInputText.trim()
-
-                        coroutineScope.launch {
-                            try {
-                                Toast.makeText(context, "Syncing with server...", Toast.LENGTH_SHORT).show()
-
-                                val syncPayload = mutableListOf("", "", "", "", "")
-                                syncPayload[subTabState] = targetedValue
-
-                                val oldPayload = mutableListOf("", "", "", "", "")
-                                oldPayload[subTabState] = oldValueForUpdate
-
-                                val requestBody = mutableMapOf<String, Any>(
-                                    "sheetName" to "Settings",
-                                    "action" to (if (editingIndex == -1) "add" else "update"),
-                                    "data" to syncPayload
-                                )
-                                
-                                if (editingIndex != -1) {
-                                    requestBody["oldData"] = oldPayload
-                                }
-
-                                val response = com.example.gjstore.network.RetrofitClient.apiService.modifySheet(requestBody)
-
-                                // Check for success (200 OK or 302 Redirect)
-                                if (response.isSuccessful || response.code() == 302) {
-                                    if (editingIndex == -1) {
-                                        // Add to local list only if not a duplicate in the UI
-                                        if (!currentWorkingList.contains(targetedValue)) {
-                                            currentWorkingList.add(targetedValue)
-                                        }
-                                    } else {
-                                        currentWorkingList[editingIndex] = targetedValue
-                                        editingIndex = -1
-                                        oldValueForUpdate = ""
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 16.dp)) {
+            items(list) { s ->
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Row(modifier = Modifier.padding(12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Text(s, modifier = Modifier.weight(1f))
+                        IconButton(onClick = { editIdx = list.indexOf(s); input = s; oldVal = s }) { Icon(Icons.Default.Edit, null, tint = Color.LightGray) }
+                        IconButton(onClick = {
+                            scope.launch {
+                                try {
+                                    val payload = MutableList(5) { "" }.apply { set(subTab, s) }
+                                    if (RetrofitClient.apiService.modifySheet(mapOf("sheetName" to "Settings", "action" to "delete", "data" to payload)).isSuccessful) {
+                                        list.remove(s); withContext(Dispatchers.IO) { CacheManager.saveSettings(context, settings) }
                                     }
-                                    
-                                    // Update cache
-                                    coroutineScope.launch(Dispatchers.IO) {
-                                        val settingsMap = mapOf(
-                                            "brands" to settings.brands.toList(),
-                                            "categories" to settings.categories.toList(),
-                                            "units" to settings.units.toList(),
-                                            "stores" to settings.stores.toList(),
-                                            "messengerKeys" to settings.messengerKeys.toList()
-                                        )
-                                        File(context.filesDir, "settings_cache.json").writeText(Gson().toJson(settingsMap))
-                                    }
-                                    
-                                    entryInputText = ""
-                                    Toast.makeText(context, "Success!", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    Toast.makeText(context, "Server Error: ${response.code()}", Toast.LENGTH_LONG).show()
-                                }
-                            } catch (e: Exception) {
-                                e.printStackTrace()
-                                Toast.makeText(context, "Network Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                                } catch (e: Exception) { e.printStackTrace() }
                             }
-                        }
-                    }
-                },
-                modifier = Modifier.padding(top = 4.dp)
-            ) {
-                Text(if (editingIndex == -1) "Add" else "Update")
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            items(currentWorkingList) { stringValue ->
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = stringValue,
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Row {
-                            IconButton(onClick = {
-                                editingIndex = currentWorkingList.indexOf(stringValue)
-                                entryInputText = stringValue
-                                oldValueForUpdate = stringValue
-                            }) {
-                                Icon(Icons.Default.Edit, contentDescription = "Edit Item", tint = Color.LightGray)
-                            }
-                            IconButton(onClick = {
-                                coroutineScope.launch {
-                                    try {
-                                        Toast.makeText(context, "Removing...", Toast.LENGTH_SHORT).show()
-
-                                        val deletePayload = mutableListOf("", "", "", "", "")
-                                        deletePayload[subTabState] = stringValue
-
-                                        val requestBody = mapOf(
-                                            "sheetName" to "Settings",
-                                            "action" to "delete",
-                                            "data" to deletePayload
-                                        )
-
-                                        val response = com.example.gjstore.network.RetrofitClient.apiService.modifySheet(requestBody)
-
-                                        if (response.isSuccessful || response.code() == 302) {
-                                            currentWorkingList.remove(stringValue)
-                                            if (entryInputText == stringValue) {
-                                                editingIndex = -1
-                                                entryInputText = ""
-                                            }
-                                            
-                                            // Update cache
-                                            coroutineScope.launch(Dispatchers.IO) {
-                                                val settingsMap = mapOf(
-                                                    "brands" to settings.brands.toList(),
-                                                    "categories" to settings.categories.toList(),
-                                                    "units" to settings.units.toList(),
-                                                    "stores" to settings.stores.toList(),
-                                                    "messengerKeys" to settings.messengerKeys.toList()
-                                                )
-                                                File(context.filesDir, "settings_cache.json").writeText(Gson().toJson(settingsMap))
-                                            }
-
-                                            Toast.makeText(context, "Removed!", Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            Toast.makeText(context, "Error: ${response.code()}", Toast.LENGTH_SHORT).show()
-                                        }
-                                    } catch (e: Exception) {
-                                        Toast.makeText(context, "Network Error", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            }) {
-                                Icon(Icons.Default.Delete, contentDescription = "Remove Item", tint = Color.Red)
-                            }
-                        }
+                        }) { Icon(Icons.Default.Delete, null, tint = Color.Red) }
                     }
                 }
             }
         }
     }
+}
 
+fun updateApp(context: Context, scope: CoroutineScope) {
+    scope.launch(Dispatchers.IO) {
+        try {
+            val url = URL("https://raw.githubusercontent.com/insomniaczxz/GJStore/main/release/app-debug.apk")
+            val conn = url.openConnection() as HttpURLConnection
+            if (conn.responseCode == 200) {
+                val file = File(context.cacheDir, "update.apk")
+                conn.inputStream.use { i -> file.outputStream().use { o -> i.copyTo(o) } }
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                context.startActivity(Intent(Intent.ACTION_VIEW).apply { setDataAndType(uri, "application/vnd.android.package-archive"); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK) })
+            }
+        } catch (e: Exception) { withContext(Dispatchers.Main) { Toast.makeText(context, "Failed", Toast.LENGTH_SHORT).show() } }
+    }
+}
+
+@Composable
+fun EmployeeEventHistoryDialog(events: List<Event>, isLoading: Boolean, onDismiss: () -> Unit, onAddRequested: () -> Unit) {
+    AlertDialog(onDismissRequest = onDismiss, title = { Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("History"); TextButton(onAddRequested) { Text("+ Add") } } }, text = { Column(modifier = Modifier.fillMaxHeight(0.7f)) { if (isLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth()); LazyColumn { items(events) { e -> Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) { Column(modifier = Modifier.padding(8.dp)) { Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(e.date, style = MaterialTheme.typography.labelSmall); Text("₱${e.amount}", color = if (e.amount < 0) Color.Red else Color(0xFF00FF87)) }; Text(e.details, style = MaterialTheme.typography.bodySmall) } } } } } }, confirmButton = { TextButton(onDismiss) { Text("Close") } })
+}
+
+@Composable
+fun EventEntryDialog(onDismiss: () -> Unit, onSave: (Event) -> Unit) {
+    var details by remember { mutableStateOf("") }
+    var amount by remember { mutableStateOf("") }
+    var isExp by remember { mutableStateOf(true) }
+    val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Add Event") }, text = { Column { Text("Date: $date"); Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { RadioButton(isExp, { isExp = true }); Text("Expense"); Spacer(modifier = Modifier.width(16.dp)); RadioButton(!isExp, { isExp = false }); Text("Income") }; OutlinedTextField(details, { details = it }, label = { Text("Details") }, modifier = Modifier.fillMaxWidth()); OutlinedTextField(amount, { amount = it }, label = { Text("Amount") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth()) } }, confirmButton = { Button(onClick = { var a = amount.toDoubleOrNull() ?: 0.0; if (isExp && a > 0) a = -a; onSave(Event(date, details, a)) }) { Text("Save") } }, dismissButton = { TextButton(onDismiss) { Text("Cancel") } })
+}
+
+object CacheManager {
+    fun saveProducts(ctx: Context, list: List<Product>) = File(ctx.filesDir, "products_cache.json").writeText(Gson().toJson(list))
+    fun loadProducts(ctx: Context): List<Product> = try { val f = File(ctx.filesDir, "products_cache.json"); if (f.exists()) Gson().fromJson(f.readText(), object : TypeToken<List<Product>>() {}.type) else emptyList() } catch (e: Exception) { emptyList() }
+    fun saveEvents(ctx: Context, list: List<Event>) = File(ctx.filesDir, "events_cache.json").writeText(Gson().toJson(list))
+    fun loadEvents(ctx: Context): List<Event> = try { val f = File(ctx.filesDir, "events_cache.json"); if (f.exists()) Gson().fromJson(f.readText(), object : TypeToken<List<Event>>() {}.type) else emptyList() } catch (e: Exception) { emptyList() }
+    fun saveSettings(ctx: Context, s: DropdownSettings) = File(ctx.filesDir, "settings_cache.json").writeText(Gson().toJson(mapOf("brands" to s.brands, "categories" to s.categories, "units" to s.units, "stores" to s.stores, "messenger" to s.messengerKeys)))
+    fun loadSettings(ctx: Context): DropdownSettings? = try {
+        val f = File(ctx.filesDir, "settings_cache.json")
+        if (f.exists()) {
+            val m: Map<String, List<String>> = Gson().fromJson(f.readText(), object : TypeToken<Map<String, List<String>>>() {}.type)
+            DropdownSettings().apply { m["brands"]?.let { brands.addAll(it) }; m["categories"]?.let { categories.addAll(it) }; m["units"]?.let { units.addAll(it) }; m["stores"]?.let { stores.addAll(it) }; m["messenger"]?.let { messengerKeys.addAll(it) } }
+        } else null
+    } catch (e: Exception) { null }
+}
+
+object DataParser {
+    fun parseProducts(body: List<List<String>>?): List<Product> {
+        val list = mutableListOf<Product>()
+        body?.drop(1)?.forEach { row ->
+            if (row.size >= 2) list.add(Product(row[0], row[1], row.getOrElse(2) { "" }, row.getOrElse(3) { "" }, row.getOrElse(4) { "" }, row.getOrNull(5)?.toDoubleOrNull() ?: 0.0, row.getOrNull(6)?.toDoubleOrNull() ?: 0.0, row.getOrElse(7) { "" }, row.getOrElse(8) { "Percentage" }, row.getOrNull(9)?.toDoubleOrNull() ?: 0.0, 0.0, row.getOrNull(11)?.toIntOrNull() ?: 0, row.getOrNull(12)?.toIntOrNull() ?: 0, row.getOrElse(13) { "" }))
+        }
+        return list
+    }
+    fun parseSettings(body: List<List<String>>?, ds: DropdownSettings) {
+        ds.brands.clear(); ds.categories.clear(); ds.units.clear(); ds.stores.clear(); ds.messengerKeys.clear()
+        body?.drop(1)?.forEach { row ->
+            row.getOrNull(0)?.takeIf { it.isNotBlank() }?.let { ds.brands.add(it.trim()) }
+            row.getOrNull(1)?.takeIf { it.isNotBlank() }?.let { ds.categories.add(it.trim()) }
+            row.getOrNull(2)?.takeIf { it.isNotBlank() }?.let { ds.units.add(it.trim()) }
+            row.getOrNull(3)?.takeIf { it.isNotBlank() }?.let { ds.stores.add(it.trim()) }
+            row.getOrNull(4)?.takeIf { it.isNotBlank() }?.let { ds.messengerKeys.add(it.trim()) }
+        }
+    }
+    fun parseEvents(body: List<List<String>>?): List<Event> = body?.drop(1)?.map { row -> Event(row[0], row[1], row.getOrNull(2)?.toDoubleOrNull() ?: 0.0) }?.reversed() ?: emptyList()
+    fun productToRow(p: Product) = listOf(p.id, p.name, p.brand, p.category, p.unit, p.size.toString(), p.cost.toString(), p.lastBoughtStore, p.markupType, p.markupValue.toString(), p.price.toString(), p.stock.toString(), p.threshold.toString(), SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()))
 }
