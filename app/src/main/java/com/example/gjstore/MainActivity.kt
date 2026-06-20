@@ -1161,7 +1161,8 @@ fun DropdownSettingsManager(settings: DropdownSettings) {
             IconButton(onClick = {
                 coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                     try {
-                        val apkUrl = "https://raw.githubusercontent.com/insomniaczxz/GJStore/main/app/build/outputs/apk/debug/app-debug.apk"
+                        // Updated to look in the 'release' folder which we will stop ignoring
+                        val apkUrl = "https://raw.githubusercontent.com/insomniaczxz/GJStore/main/release/app-debug.apk"
                         val connection = URL(apkUrl).openConnection() as HttpURLConnection
                         connection.connect()
                         
