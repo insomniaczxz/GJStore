@@ -236,11 +236,18 @@ fun MainAppScreen() {
         })
         if (showEventHistoryDialog) EmployeeEventHistoryDialog(eventsList, isEventsLoading, { showEventHistoryDialog = false }, { showEventDialog = true }, { editingEvent = it; showEventDialog = true })
         if (showFormDialog) AdminProductFormDialog(editingProduct, dynamicSettings, { showFormDialog = false }, { finalized ->
-            if (editingProduct == null) productsList.add(finalized) else { val idx = productsList.indexOfFirst { it.id == finalized.id }; if (idx != -1) productsList[idx] = finalized }
-            val act = PendingAction("Products", if (editingProduct == null) "add" else "update", DataParser.productToRow(finalized))
+            val isUpdating = editingProduct != null && finalized.id == editingProduct?.id
+            if (isUpdating) {
+                val idx = productsList.indexOfFirst { it.id == finalized.id }
+                if (idx != -1) productsList[idx] = finalized
+            } else {
+                productsList.add(finalized)
+            }
+            val action = if (isUpdating) "update" else "add"
+            val act = PendingAction("Products", action, DataParser.productToRow(finalized))
             pendingQueue.add(act); performAction(act)
             coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
-            Toast.makeText(context, if (editingProduct == null) "Product Added" else "Product Updated", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, if (isUpdating) "Product Updated" else "Product Added", Toast.LENGTH_SHORT).show()
             showFormDialog = false
         })
     }
