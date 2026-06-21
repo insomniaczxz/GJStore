@@ -16,12 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.SystemUpdate
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -31,6 +26,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.sp
 import com.example.gjstore.data.*
 import com.example.gjstore.network.RetrofitClient
 import com.google.gson.Gson
@@ -73,6 +72,7 @@ fun MainAppScreen() {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     
+    var isAppLocked by remember { mutableStateOf(true) }
     var searchQuery by remember { mutableStateOf("") }
     var isAdminLoggedIn by remember { mutableStateOf(false) }
     var showLoginDialog by remember { mutableStateOf(false) }
@@ -164,82 +164,135 @@ fun MainAppScreen() {
         finally { isLoading = false; isEventsLoading = false }
     }
 
-    Scaffold(
-        topBar = {
-            Column {
-                TopAppBar(
-                    title = { Row { Text("GJStore"); if (pendingQueue.isNotEmpty()) Text(" (Syncing...)", color = Color.Gray, style = MaterialTheme.typography.labelSmall) } },
-                    actions = { Button(onClick = { if (isAdminLoggedIn) isAdminLoggedIn = false else showLoginDialog = true }) { Text(if (isAdminLoggedIn) "Logout" else "Admin") } }
-                )
-                if (isAdminLoggedIn) TabRow(selectedTabIndex = currentAdminTab) { adminTabs.forEachIndexed { i, t -> Tab(selected = currentAdminTab == i, onClick = { currentAdminTab = i }, text = { Text(t) }) } }
+    if (isAppLocked) {
+        PinLockScreen(onCorrectPin = { isAppLocked = false })
+    } else {
+        Scaffold(
+            topBar = {
+                Column {
+                    TopAppBar(
+                        title = { Row { Text("GJStore"); if (pendingQueue.isNotEmpty()) Text(" (Syncing...)", color = Color.Gray, style = MaterialTheme.typography.labelSmall) } },
+                        actions = { Button(onClick = { if (isAdminLoggedIn) isAdminLoggedIn = false else showLoginDialog = true }) { Text(if (isAdminLoggedIn) "Logout" else "Admin") } }
+                    )
+                    if (isAdminLoggedIn) TabRow(selectedTabIndex = currentAdminTab) { adminTabs.forEachIndexed { i, t -> Tab(selected = currentAdminTab == i, onClick = { currentAdminTab = i }, text = { Text(t) }) } }
+                }
+            },
+            floatingActionButton = {
+                if (isAdminLoggedIn && (currentAdminTab == 0 || currentAdminTab == 3)) {
+                    FloatingActionButton(onClick = { if (currentAdminTab == 0) { editingProduct = null; showFormDialog = true } else showEventDialog = true }) { Icon(Icons.Default.Add, null) }
+                }
             }
-        },
-        floatingActionButton = {
-            if (isAdminLoggedIn && (currentAdminTab == 0 || currentAdminTab == 3)) {
-                FloatingActionButton(onClick = { if (currentAdminTab == 0) { editingProduct = null; showFormDialog = true } else showEventDialog = true }) { Icon(Icons.Default.Add, null) }
-            }
-        }
-    ) { paddingValues ->
-        Column(modifier = Modifier.fillMaxSize().padding(paddingValues).background(MaterialTheme.colorScheme.background)) {
-            if (isLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        ) { paddingValues ->
+            Column(modifier = Modifier.fillMaxSize().padding(paddingValues).background(MaterialTheme.colorScheme.background)) {
+                if (isLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
 
-            if (!isAdminLoggedIn) {
-                UserDashboard(searchQuery, { searchQuery = it }, filteredProducts, { showEventHistoryDialog = true }, { updated ->
-                    val idx = productsList.indexOfFirst { it.id == updated.id }
-                    if (idx != -1) {
-                        productsList[idx] = updated
-                        val act = PendingAction("Products", "update", DataParser.productToRow(updated))
+                if (!isAdminLoggedIn) {
+                    UserDashboard(searchQuery, { searchQuery = it }, filteredProducts, { showEventHistoryDialog = true }, { updated ->
+                        val idx = productsList.indexOfFirst { it.id == updated.id }
+                        if (idx != -1) {
+                            productsList[idx] = updated
+                            val act = PendingAction("Products", "update", DataParser.productToRow(updated))
+                            pendingQueue.add(act); performAction(act)
+                            coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
+                            Toast.makeText(context, "Stock Updated", Toast.LENGTH_SHORT).show()
+                        }
+                    })
+                } else {
+                    AdminDashboard(productsList, dynamicSettings, eventsList, isEventsLoading, currentAdminTab, { target, action ->
+                        val data = DataParser.productToRow(target)
+                        val act = PendingAction("Products", action, data)
                         pendingQueue.add(act); performAction(act)
                         coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
-                        Toast.makeText(context, "Stock Updated", Toast.LENGTH_SHORT).show()
-                    }
-                })
-            } else {
-                AdminDashboard(productsList, dynamicSettings, eventsList, isEventsLoading, currentAdminTab, { target, action ->
-                    val data = DataParser.productToRow(target)
-                    val act = PendingAction("Products", action, data)
-                    pendingQueue.add(act); performAction(act)
-                    coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
-                    Toast.makeText(context, "Product ${action.replaceFirstChar { it.uppercase() }}d", Toast.LENGTH_SHORT).show()
-                }, { editingProduct = it; showFormDialog = true }, { editingEvent = it; showEventDialog = true }, { event ->
-                    eventsList.remove(event)
-                    val data = DataParser.eventToRow(event)
-                    val act = PendingAction("Events", "delete", data, data)
-                    pendingQueue.add(act); performAction(act)
-                    coroutineScope.launch(Dispatchers.IO) { CacheManager.saveEvents(context, eventsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
-                    Toast.makeText(context, "Event Deleted", Toast.LENGTH_SHORT).show()
-                }, { sheet, action, data, oldData ->
-                    val act = PendingAction(sheet, action, data, oldData)
-                    pendingQueue.add(act); performAction(act)
-                    coroutineScope.launch(Dispatchers.IO) { CacheManager.saveSettings(context, dynamicSettings); CacheManager.saveQueue(context, pendingQueue.toList()) }
-                    Toast.makeText(context, "Settings updated", Toast.LENGTH_SHORT).show()
-                })
+                        Toast.makeText(context, "Product ${action.replaceFirstChar { it.uppercase() }}d", Toast.LENGTH_SHORT).show()
+                    }, { editingProduct = it; showFormDialog = true }, { editingEvent = it; showEventDialog = true }, { event ->
+                        eventsList.remove(event)
+                        val data = DataParser.eventToRow(event)
+                        val act = PendingAction("Events", "delete", data, data)
+                        pendingQueue.add(act); performAction(act)
+                        coroutineScope.launch(Dispatchers.IO) { CacheManager.saveEvents(context, eventsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
+                        Toast.makeText(context, "Event Deleted", Toast.LENGTH_SHORT).show()
+                    }, { sheet, action, data, oldData ->
+                        val act = PendingAction(sheet, action, data, oldData)
+                        pendingQueue.add(act); performAction(act)
+                        coroutineScope.launch(Dispatchers.IO) { CacheManager.saveSettings(context, dynamicSettings); CacheManager.saveQueue(context, pendingQueue.toList()) }
+                        Toast.makeText(context, "Settings updated", Toast.LENGTH_SHORT).show()
+                    })
+                }
             }
         }
-    }
 
-    if (showLoginDialog) AdminLoginDialog({ showLoginDialog = false }, { isAdminLoggedIn = true; showLoginDialog = false })
-    if (showEventDialog) EventEntryDialog(editingEvent, { showEventDialog = false; editingEvent = null }, { event ->
-        val action = if (editingEvent == null) "add" else "update"
-        val data = DataParser.eventToRow(event)
-        val oldData = if (editingEvent != null) DataParser.eventToRow(editingEvent!!) else null
-        
-        if (editingEvent == null) eventsList.add(0, event) else { val idx = eventsList.indexOf(editingEvent); if (idx != -1) eventsList[idx] = event }
-        val act = PendingAction("Events", action, data, oldData)
-        pendingQueue.add(act); performAction(act)
-        coroutineScope.launch(Dispatchers.IO) { CacheManager.saveEvents(context, eventsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
-        Toast.makeText(context, if (editingEvent == null) "Event Added" else "Event Updated", Toast.LENGTH_SHORT).show()
-        showEventDialog = false; editingEvent = null
-    })
-    if (showEventHistoryDialog) EmployeeEventHistoryDialog(eventsList, isEventsLoading, { showEventHistoryDialog = false }, { showEventDialog = true }, { editingEvent = it; showEventDialog = true })
-    if (showFormDialog) AdminProductFormDialog(editingProduct, dynamicSettings, { showFormDialog = false }, { finalized ->
-        if (editingProduct == null) productsList.add(finalized) else { val idx = productsList.indexOfFirst { it.id == finalized.id }; if (idx != -1) productsList[idx] = finalized }
-        val act = PendingAction("Products", if (editingProduct == null) "add" else "update", DataParser.productToRow(finalized))
-        pendingQueue.add(act); performAction(act)
-        coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
-        Toast.makeText(context, if (editingProduct == null) "Product Added" else "Product Updated", Toast.LENGTH_SHORT).show()
-        showFormDialog = false
-    })
+        if (showLoginDialog) AdminLoginDialog({ showLoginDialog = false }, { isAdminLoggedIn = true; showLoginDialog = false })
+        if (showEventDialog) EventEntryDialog(editingEvent, { showEventDialog = false; editingEvent = null }, { event ->
+            val action = if (editingEvent == null) "add" else "update"
+            val data = DataParser.eventToRow(event)
+            val oldData = if (editingEvent != null) DataParser.eventToRow(editingEvent!!) else null
+            
+            if (editingEvent == null) eventsList.add(0, event) else { val idx = eventsList.indexOf(editingEvent); if (idx != -1) eventsList[idx] = event }
+            val act = PendingAction("Events", action, data, oldData)
+            pendingQueue.add(act); performAction(act)
+            coroutineScope.launch(Dispatchers.IO) { CacheManager.saveEvents(context, eventsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
+            Toast.makeText(context, if (editingEvent == null) "Event Added" else "Event Updated", Toast.LENGTH_SHORT).show()
+            showEventDialog = false; editingEvent = null
+        })
+        if (showEventHistoryDialog) EmployeeEventHistoryDialog(eventsList, isEventsLoading, { showEventHistoryDialog = false }, { showEventDialog = true }, { editingEvent = it; showEventDialog = true })
+        if (showFormDialog) AdminProductFormDialog(editingProduct, dynamicSettings, { showFormDialog = false }, { finalized ->
+            if (editingProduct == null) productsList.add(finalized) else { val idx = productsList.indexOfFirst { it.id == finalized.id }; if (idx != -1) productsList[idx] = finalized }
+            val act = PendingAction("Products", if (editingProduct == null) "add" else "update", DataParser.productToRow(finalized))
+            pendingQueue.add(act); performAction(act)
+            coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
+            Toast.makeText(context, if (editingProduct == null) "Product Added" else "Product Updated", Toast.LENGTH_SHORT).show()
+            showFormDialog = false
+        })
+    }
+}
+
+@Composable
+fun PinLockScreen(onCorrectPin: () -> Unit) {
+    var pinInput by remember { mutableStateOf("") }
+    val correctPin = "041823"
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF121212))
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            imageVector = Icons.Default.Lock,
+            contentDescription = null,
+            modifier = Modifier.size(64.dp),
+            tint = Color(0xFFFF7D1E)
+        )
+        Spacer(modifier = Modifier.height(24.dp))
+        Text(
+            text = "Enter App PIN",
+            style = MaterialTheme.typography.headlineMedium,
+            color = Color.White,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        OutlinedTextField(
+            value = pinInput,
+            onValueChange = {
+                if (it.length <= 6 && it.all { char -> char.isDigit() }) {
+                    pinInput = it
+                    if (it == correctPin) onCorrectPin()
+                }
+            },
+            label = { Text("6-Digit PIN") },
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+            modifier = Modifier.width(200.dp),
+            textStyle = LocalTextStyle.current.copy(
+                textAlign = TextAlign.Center,
+                fontSize = 20.sp,
+                letterSpacing = 8.sp
+            ),
+            singleLine = true
+        )
+    }
 }
 
 @Composable
@@ -323,26 +376,27 @@ fun AdminProductFormDialog(product: Product?, settings: DropdownSettings, onDism
     var mVal by remember { mutableStateOf(product?.markupValue?.toString() ?: "") }; var stock by remember { mutableStateOf(product?.stock?.toString() ?: "") }; var thresh by remember { mutableStateOf(product?.threshold?.toString() ?: "") }
     var brand by remember { mutableStateOf(product?.brand ?: "") }; var cat by remember { mutableStateOf(product?.category ?: "") }; var unit by remember { mutableStateOf(product?.unit ?: "") }; var store by remember { mutableStateOf(product?.lastBoughtStore ?: "") }; var mType by remember { mutableStateOf(product?.markupType ?: "Percentage") }
     var ideal by remember { mutableStateOf(product?.idealStock?.toString() ?: "") }
-    var sellPrice by remember { mutableStateOf(product?.price?.toInt()?.toString() ?: "") }
+    var sellPrice by remember { mutableStateOf(product?.price?.let { if (it % 1.0 == 0.0) it.toInt().toString() else "%.2f".format(Locale.US, it) } ?: "") }
 
     val sortedBrands = remember { derivedStateOf { settings.brands.sortedBy { it.lowercase() } } }
     val sortedCategories = remember { derivedStateOf { settings.categories.sortedBy { it.lowercase() } } }
     val sortedUnits = remember { derivedStateOf { settings.units.sortedBy { it.lowercase() } } }
     val sortedStores = remember { derivedStateOf { settings.stores.sortedBy { it.lowercase() } } }
 
-    fun recalcPrice() {
-        val c = cost.toDoubleOrNull() ?: 0.0
-        val v = mVal.toDoubleOrNull() ?: 0.0
-        val res = if (mType == "Percentage") c * (1 + v / 100) else c + v
-        if (res > 0) sellPrice = kotlin.math.ceil(res).toInt().toString()
+    fun recalcPrice(newCost: String? = null, newMarkup: String? = null, newType: String? = null) {
+        val c = (newCost ?: cost).toDoubleOrNull() ?: 0.0
+        val v = (newMarkup ?: mVal).toDoubleOrNull() ?: 0.0
+        val type = newType ?: mType
+        val res = if (type == "Percentage") c * (1 + v / 100) else c + v
+        if (res >= 0) sellPrice = if (res % 1.0 == 0.0) res.toInt().toString() else "%.2f".format(Locale.US, res)
     }
 
-    fun recalcMarkup() {
+    fun recalcMarkup(newSellPrice: String) {
         val c = cost.toDoubleOrNull() ?: 0.0
-        val p = sellPrice.toDoubleOrNull() ?: 0.0
+        val p = newSellPrice.toDoubleOrNull() ?: 0.0
         if (c > 0) {
             val res = if (mType == "Percentage") ((p / c) - 1) * 100 else p - c
-            mVal = if (mType == "Percentage") "%.2f".format(Locale.US, res) else res.toInt().toString()
+            mVal = if (mType == "Percentage") "%.2f".format(Locale.US, res) else if (res % 1.0 == 0.0) res.toInt().toString() else "%.2f".format(Locale.US, res)
         }
     }
 
@@ -352,17 +406,17 @@ fun AdminProductFormDialog(product: Product?, settings: DropdownSettings, onDism
                 OutlinedTextField(name, { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
                 DropdownField("Brand", brand, sortedBrands.value) { brand = it }; DropdownField("Category", cat, sortedCategories.value) { cat = it }; DropdownField("Unit", unit, sortedUnits.value) { unit = it }
                 OutlinedTextField(size, { size = it }, label = { Text("Size") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(cost, { cost = it; recalcPrice() }, label = { Text("Cost") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(cost, { cost = it; recalcPrice(newCost = it) }, label = { Text("Cost") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
                 
                 Text("Markup Type", style = MaterialTheme.typography.labelMedium)
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    RadioButton(mType == "Percentage", { mType = "Percentage"; recalcMarkup() }); Text(" Percentage (%) ")
+                    RadioButton(mType == "Percentage", { mType = "Percentage"; recalcMarkup(sellPrice) }); Text(" Percentage (%) ")
                     Spacer(modifier = Modifier.width(8.dp))
-                    RadioButton(mType == "Fixed", { mType = "Fixed"; recalcMarkup() }); Text(" Fixed (₱) ")
+                    RadioButton(mType == "Fixed", { mType = "Fixed"; recalcMarkup(sellPrice) }); Text(" Fixed (₱) ")
                 }
                 
-                OutlinedTextField(mVal, { mVal = it; recalcPrice() }, label = { Text("Markup Value") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(sellPrice, { sellPrice = it; recalcMarkup() }, label = { Text("Selling Price") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(mVal, { mVal = it; recalcPrice(newMarkup = it) }, label = { Text("Markup Value") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(sellPrice, { sellPrice = it; recalcMarkup(it) }, label = { Text("Selling Price") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
 
                 OutlinedTextField(ideal, { if (it.all { c -> c.isDigit() }) ideal = it }, label = { Text("Ideal Stock") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(stock, { if (it.all { c -> c.isDigit() }) stock = it }, label = { Text("Stock") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
@@ -571,7 +625,7 @@ fun EventEntryDialog(event: Event? = null, onDismiss: () -> Unit, onSave: (Event
         val finalized = if (event == null) Event(now, details, a, person, "", "") 
                         else event.copy(details = details, amount = a, editedBy = person, editedDate = now)
         onSave(finalized)
-    }) { Text("Save") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+    }) { Text("Save") } }, dismissButton = { TextButton(onDismiss) { Text("Cancel") } })
 }
 
 object CacheManager {
