@@ -376,7 +376,7 @@ fun AdminProductFormDialog(product: Product?, settings: DropdownSettings, onDism
     var mVal by remember { mutableStateOf(product?.markupValue?.toString() ?: "") }; var stock by remember { mutableStateOf(product?.stock?.toString() ?: "") }; var thresh by remember { mutableStateOf(product?.threshold?.toString() ?: "") }
     var brand by remember { mutableStateOf(product?.brand ?: "") }; var cat by remember { mutableStateOf(product?.category ?: "") }; var unit by remember { mutableStateOf(product?.unit ?: "") }; var store by remember { mutableStateOf(product?.lastBoughtStore ?: "") }; var mType by remember { mutableStateOf(product?.markupType ?: "Percentage") }
     var ideal by remember { mutableStateOf(product?.idealStock?.toString() ?: "") }
-    var sellPrice by remember { mutableStateOf(product?.price?.let { if (it % 1.0 == 0.0) it.toInt().toString() else "%.2f".format(Locale.US, it) } ?: "") }
+    var sellPrice by remember { mutableStateOf(product?.price?.let { kotlin.math.ceil(it).toInt().toString() } ?: "") }
 
     val sortedBrands = remember { derivedStateOf { settings.brands.sortedBy { it.lowercase() } } }
     val sortedCategories = remember { derivedStateOf { settings.categories.sortedBy { it.lowercase() } } }
@@ -388,7 +388,7 @@ fun AdminProductFormDialog(product: Product?, settings: DropdownSettings, onDism
         val v = (newMarkup ?: mVal).toDoubleOrNull() ?: 0.0
         val type = newType ?: mType
         val res = if (type == "Percentage") c * (1 + v / 100) else c + v
-        if (res >= 0) sellPrice = if (res % 1.0 == 0.0) res.toInt().toString() else "%.2f".format(Locale.US, res)
+        if (res >= 0) sellPrice = kotlin.math.ceil(res).toInt().toString()
     }
 
     fun recalcMarkup(newSellPrice: String) {
