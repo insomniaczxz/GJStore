@@ -11,7 +11,7 @@ data class Product(
     val lastBoughtStore: String = "",
     val markupType: String = "", // "Percentage" or "Fixed"
     val markupValue: Double = 0.0,
-    var price: Double = 0.0,
+    val price: Double = 0.0,
     val stock: Int = 0,
     val threshold: Int = 0,
     val date: String = "",
@@ -19,14 +19,4 @@ data class Product(
 ) {
     val formattedSize: String
         get() = if (size % 1.0 == 0.0) size.toInt().toString() else size.toString()
-
-    init {
-        val rawPrice = if (markupType.equals("Percentage", ignoreCase = true)) {
-            cost * (1 + (markupValue / 100))
-        } else {
-            cost + markupValue
-        }
-        // Roundup both percentage and fixed markup
-        price = kotlin.math.ceil(rawPrice)
-    }
 }

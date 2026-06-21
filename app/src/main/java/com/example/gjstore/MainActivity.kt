@@ -323,11 +323,28 @@ fun AdminProductFormDialog(product: Product?, settings: DropdownSettings, onDism
     var mVal by remember { mutableStateOf(product?.markupValue?.toString() ?: "") }; var stock by remember { mutableStateOf(product?.stock?.toString() ?: "") }; var thresh by remember { mutableStateOf(product?.threshold?.toString() ?: "") }
     var brand by remember { mutableStateOf(product?.brand ?: "") }; var cat by remember { mutableStateOf(product?.category ?: "") }; var unit by remember { mutableStateOf(product?.unit ?: "") }; var store by remember { mutableStateOf(product?.lastBoughtStore ?: "") }; var mType by remember { mutableStateOf(product?.markupType ?: "Percentage") }
     var ideal by remember { mutableStateOf(product?.idealStock?.toString() ?: "") }
+    var sellPrice by remember { mutableStateOf(product?.price?.toInt()?.toString() ?: "") }
 
     val sortedBrands = remember { derivedStateOf { settings.brands.sortedBy { it.lowercase() } } }
     val sortedCategories = remember { derivedStateOf { settings.categories.sortedBy { it.lowercase() } } }
     val sortedUnits = remember { derivedStateOf { settings.units.sortedBy { it.lowercase() } } }
     val sortedStores = remember { derivedStateOf { settings.stores.sortedBy { it.lowercase() } } }
+
+    fun recalcPrice() {
+        val c = cost.toDoubleOrNull() ?: 0.0
+        val v = mVal.toDoubleOrNull() ?: 0.0
+        val res = if (mType == "Percentage") c * (1 + v / 100) else c + v
+        if (res > 0) sellPrice = kotlin.math.ceil(res).toInt().toString()
+    }
+
+    fun recalcMarkup() {
+        val c = cost.toDoubleOrNull() ?: 0.0
+        val p = sellPrice.toDoubleOrNull() ?: 0.0
+        if (c > 0) {
+            val res = if (mType == "Percentage") ((p / c) - 1) * 100 else p - c
+            mVal = if (mType == "Percentage") "%.2f".format(Locale.US, res) else res.toInt().toString()
+        }
+    }
 
     AlertDialog(onDismissRequest = onDismiss, title = { Text(if (product == null) "Add Product" else "Edit Product") }, text = {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -335,24 +352,17 @@ fun AdminProductFormDialog(product: Product?, settings: DropdownSettings, onDism
                 OutlinedTextField(name, { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
                 DropdownField("Brand", brand, sortedBrands.value) { brand = it }; DropdownField("Category", cat, sortedCategories.value) { cat = it }; DropdownField("Unit", unit, sortedUnits.value) { unit = it }
                 OutlinedTextField(size, { size = it }, label = { Text("Size") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(cost, { cost = it }, label = { Text("Cost") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(cost, { cost = it; recalcPrice() }, label = { Text("Cost") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
                 
                 Text("Markup Type", style = MaterialTheme.typography.labelMedium)
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    RadioButton(mType == "Percentage", { mType = "Percentage" }); Text(" Percentage (%) ")
+                    RadioButton(mType == "Percentage", { mType = "Percentage"; recalcMarkup() }); Text(" Percentage (%) ")
                     Spacer(modifier = Modifier.width(8.dp))
-                    RadioButton(mType == "Fixed", { mType = "Fixed" }); Text(" Fixed (₱) ")
+                    RadioButton(mType == "Fixed", { mType = "Fixed"; recalcMarkup() }); Text(" Fixed (₱) ")
                 }
                 
-                OutlinedTextField(mVal, { mVal = it }, label = { Text("Markup Value") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                
-                val calcPrice = remember(cost, mVal, mType) {
-                    val c = cost.toDoubleOrNull() ?: 0.0
-                    val v = mVal.toDoubleOrNull() ?: 0.0
-                    val res = if (mType == "Percentage") c * (1 + v / 100) else c + v
-                    kotlin.math.ceil(res).toInt()
-                }
-                Text("Selling Price: ₱$calcPrice", color = Color(0xFF00FF87), style = MaterialTheme.typography.titleMedium)
+                OutlinedTextField(mVal, { mVal = it; recalcPrice() }, label = { Text("Markup Value") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(sellPrice, { sellPrice = it; recalcMarkup() }, label = { Text("Selling Price") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
 
                 OutlinedTextField(ideal, { if (it.all { c -> c.isDigit() }) ideal = it }, label = { Text("Ideal Stock") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(stock, { if (it.all { c -> c.isDigit() }) stock = it }, label = { Text("Stock") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
@@ -360,7 +370,7 @@ fun AdminProductFormDialog(product: Product?, settings: DropdownSettings, onDism
                 DropdownField("Store", store, sortedStores.value) { store = it }
             }
         }
-    }, confirmButton = { Button(onClick = { onSave(Product(product?.id ?: System.currentTimeMillis().toString(), name, brand, cat, unit, size.toDoubleOrNull() ?: 0.0, cost.toDoubleOrNull() ?: 0.0, store, mType, mVal.toDoubleOrNull() ?: 0.0, 0.0, stock.toIntOrNull() ?: 0, thresh.toIntOrNull() ?: 0, SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()), ideal.toIntOrNull() ?: 0)) }) { Text("Save") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+    }, confirmButton = { Button(onClick = { onSave(Product(product?.id ?: System.currentTimeMillis().toString(), name, brand, cat, unit, size.toDoubleOrNull() ?: 0.0, cost.toDoubleOrNull() ?: 0.0, store, mType, mVal.toDoubleOrNull() ?: 0.0, sellPrice.toDoubleOrNull() ?: 0.0, stock.toIntOrNull() ?: 0, thresh.toIntOrNull() ?: 0, SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()), ideal.toIntOrNull() ?: 0)) }) { Text("Save") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -596,9 +606,9 @@ object DataParser {
                 row.getOrNull(5)?.toDoubleOrNull() ?: 0.0, 
                 row.getOrNull(6)?.toDoubleOrNull() ?: 0.0, 
                 row.getOrElse(7) { "" }, 
-                row.getOrElse(8) { "Percentage" }, 
+                row.getOrElse(8) { "Percentage" },
                 row.getOrNull(9)?.toDoubleOrNull() ?: 0.0, 
-                0.0, 
+                row.getOrNull(10)?.toDoubleOrNull() ?: 0.0,
                 row.getOrNull(11)?.toIntOrNull() ?: 0, 
                 row.getOrNull(12)?.toIntOrNull() ?: 0, 
                 row.getOrElse(13) { "" },
