@@ -92,6 +92,8 @@ fun MainAppScreen() {
     var isEventsLoading by remember { mutableStateOf(false) }
     val dynamicSettings = remember { DropdownSettings() }
 
+    var appPin by remember { mutableStateOf(CacheManager.loadPin(context)) }
+
     val filteredProducts by remember {
         derivedStateOf {
             productsList.filter {
@@ -128,8 +130,10 @@ fun MainAppScreen() {
             val cachedEvents = CacheManager.loadEvents(context)
             val cachedSettings = CacheManager.loadSettings(context)
             val cachedQueue = CacheManager.loadQueue(context)
+            val cachedPin = CacheManager.loadPin(context)
             withContext(Dispatchers.Main) {
                 productsList.addAll(cachedProducts); eventsList.addAll(cachedEvents); pendingQueue.addAll(cachedQueue)
+                appPin = cachedPin
                 cachedSettings?.let {
                     dynamicSettings.brands.clear(); dynamicSettings.brands.addAll(it.brands)
                     dynamicSettings.categories.clear(); dynamicSettings.categories.addAll(it.categories)
@@ -159,13 +163,20 @@ fun MainAppScreen() {
                 withContext(Dispatchers.IO) { CacheManager.saveEvents(context, newE) }
             }
             val aRes = RetrofitClient.apiService.readSheet("Admin")
-            if (aRes.isSuccessful) aRes.body()?.getOrNull(1)?.getOrNull(0)?.let { CacheManager.saveAdmin(context, it) }
+            if (aRes.isSuccessful) {
+                val row = aRes.body()?.getOrNull(1)
+                row?.getOrNull(0)?.let { CacheManager.saveAdmin(context, it) }
+                row?.getOrNull(1)?.let { 
+                    CacheManager.savePin(context, it)
+                    withContext(Dispatchers.Main) { appPin = it }
+                }
+            }
         } catch (e: Exception) { Toast.makeText(context, "Working Offline", Toast.LENGTH_SHORT).show() }
         finally { isLoading = false; isEventsLoading = false }
     }
 
     if (isAppLocked) {
-        PinLockScreen(onCorrectPin = { isAppLocked = false })
+        PinLockScreen(appPin, onCorrectPin = { isAppLocked = false })
     } else {
         Scaffold(
             topBar = {
@@ -246,6 +257,25 @@ fun MainAppScreen() {
             val action = if (isUpdating) "update" else "add"
             val act = PendingAction("Products", action, DataParser.productToRow(finalized))
             pendingQueue.add(act); performAction(act)
+
+            // Auto-add new dropdown options to Settings for faster product addition
+            val newBrand = finalized.brand.trim().takeIf { it.isNotBlank() && !dynamicSettings.brands.any { b -> b.equals(it, ignoreCase = true) } }
+            val newCat = finalized.category.trim().takeIf { it.isNotBlank() && !dynamicSettings.categories.any { c -> c.equals(it, ignoreCase = true) } }
+            val newUnit = finalized.unit.trim().takeIf { it.isNotBlank() && !dynamicSettings.units.any { u -> u.equals(it, ignoreCase = true) } }
+            val newStore = finalized.lastBoughtStore.trim().takeIf { it.isNotBlank() && !dynamicSettings.stores.any { s -> s.equals(it, ignoreCase = true) } }
+
+            if (newBrand != null || newCat != null || newUnit != null || newStore != null) {
+                newBrand?.let { dynamicSettings.brands.add(it) }
+                newCat?.let { dynamicSettings.categories.add(it) }
+                newUnit?.let { dynamicSettings.units.add(it) }
+                newStore?.let { dynamicSettings.stores.add(it) }
+                
+                val settingsData = listOf(newBrand ?: "", newCat ?: "", newUnit ?: "", newStore ?: "", "")
+                val settingsAct = PendingAction("Settings", "add", settingsData)
+                pendingQueue.add(settingsAct); performAction(settingsAct)
+                coroutineScope.launch(Dispatchers.IO) { CacheManager.saveSettings(context, dynamicSettings) }
+            }
+
             coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
             Toast.makeText(context, if (isUpdating) "Product Updated" else "Product Added", Toast.LENGTH_SHORT).show()
             showFormDialog = false
@@ -254,9 +284,9 @@ fun MainAppScreen() {
 }
 
 @Composable
-fun PinLockScreen(onCorrectPin: () -> Unit) {
+fun PinLockScreen(correctPin: String, onCorrectPin: () -> Unit) {
     var pinInput by remember { mutableStateOf("") }
-    val correctPin = "041823"
+    val pinToMatch = correctPin.ifBlank { "041823" }
 
     Column(
         modifier = Modifier
@@ -285,7 +315,7 @@ fun PinLockScreen(onCorrectPin: () -> Unit) {
             onValueChange = {
                 if (it.length <= 6 && it.all { char -> char.isDigit() }) {
                     pinInput = it
-                    if (it == correctPin) onCorrectPin()
+                    if (it == pinToMatch) onCorrectPin()
                 }
             },
             label = { Text("6-Digit PIN") },
@@ -545,41 +575,88 @@ fun AdminEventsScreen(events: List<Event>, isLoading: Boolean, onEdit: (Event) -
 @Composable
 fun DropdownSettingsManager(settings: DropdownSettings, onAction: (String, String, List<String?>, List<String?>?) -> Unit) {
     var subTab by remember { mutableIntStateOf(0) }
-    val sections = listOf("Brands", "Categories", "Units", "Stores", "Messenger")
+    val sections = listOf("Brands", "Categories", "Units", "Stores", "Messenger", "Security")
     var input by remember { mutableStateOf("") }; var editIdx by remember { mutableIntStateOf(-1) }; var oldVal by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope(); val context = LocalContext.current
-    val list = when(subTab) { 0 -> settings.brands; 1 -> settings.categories; 2 -> settings.units; 3 -> settings.stores; else -> settings.messengerKeys }
-    val sortedList by remember(subTab) { derivedStateOf { list.sortedBy { it.lowercase() } } }
+    
+    if (subTab == 5) {
+        SecuritySettings(onAction)
+    } else {
+        val list = when(subTab) { 
+            0 -> settings.brands; 1 -> settings.categories; 2 -> settings.units; 3 -> settings.stores; else -> settings.messengerKeys 
+        }
+        val sortedList by remember(subTab) { derivedStateOf { list.sortedBy { it.lowercase() } } }
 
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            ScrollableTabRow(selectedTabIndex = subTab, edgePadding = 0.dp, modifier = Modifier.weight(1f)) { sections.forEachIndexed { i, t -> Tab(subTab == i, { subTab = i; input = ""; editIdx = -1 }, text = { Text(t) }) } }
-            IconButton(onClick = { updateApp(context, scope) }) { Icon(Icons.Default.SystemUpdate, null, tint = Color(0xFFFF7D1E)) }
-        }
-        Spacer(modifier = Modifier.height(16.dp))
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            OutlinedTextField(input, { input = it }, label = { Text(if (editIdx == -1) "Add" else "Update") }, modifier = Modifier.weight(1f))
-            Button(onClick = {
-                if (input.isNotBlank()) {
-                    val newVal = input.trim(); val payload = MutableList(5) { "" }.apply { set(subTab, newVal) }
-                    val action = if (editIdx == -1) "add" else "update"
-                    val oldPayload = if (editIdx != -1) MutableList(5) { "" }.apply { set(subTab, oldVal) } else null
-                    if (editIdx == -1) { if (!list.contains(newVal)) list.add(newVal) } else { list[editIdx] = newVal; editIdx = -1 }
-                    onAction("Settings", action, payload, oldPayload); input = ""
-                }
-            }) { Text(if (editIdx == -1) "Add" else "Update") }
-        }
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 16.dp)) {
-            items(sortedList) { s ->
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Row(modifier = Modifier.padding(12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                        Text(s, modifier = Modifier.weight(1f))
-                        IconButton(onClick = { editIdx = list.indexOf(s); input = s; oldVal = s }) { Icon(Icons.Default.Edit, null, tint = Color.LightGray) }
-                        IconButton(onClick = { val p = MutableList(5) { "" }.apply { set(subTab, s) }; list.remove(s); onAction("Settings", "delete", p, p) }) { Icon(Icons.Default.Delete, null, tint = Color.Red) }
+        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                ScrollableTabRow(selectedTabIndex = subTab, edgePadding = 0.dp, modifier = Modifier.weight(1f)) { sections.forEachIndexed { i, t -> Tab(subTab == i, { subTab = i; input = ""; editIdx = -1 }, text = { Text(t) }) } }
+                IconButton(onClick = { updateApp(context, scope) }) { Icon(Icons.Default.SystemUpdate, null, tint = Color(0xFFFF7D1E)) }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                OutlinedTextField(input, { input = it }, label = { Text(if (editIdx == -1) "Add" else "Update") }, modifier = Modifier.weight(1f))
+                Button(onClick = {
+                    if (input.isNotBlank()) {
+                        val newVal = input.trim(); val payload = MutableList(5) { "" }.apply { set(subTab, newVal) }
+                        val action = if (editIdx == -1) "add" else "update"
+                        val oldPayload = if (editIdx != -1) MutableList(5) { "" }.apply { set(subTab, oldVal) } else null
+                        if (editIdx == -1) { if (!list.contains(newVal)) list.add(newVal) } else { list[editIdx] = newVal; editIdx = -1 }
+                        onAction("Settings", action, payload, oldPayload); input = ""
+                    }
+                }) { Text(if (editIdx == -1) "Add" else "Update") }
+            }
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 16.dp)) {
+                items(sortedList) { s ->
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Row(modifier = Modifier.padding(12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            Text(s, modifier = Modifier.weight(1f))
+                            IconButton(onClick = { editIdx = list.indexOf(s); input = s; oldVal = s }) { Icon(Icons.Default.Edit, null, tint = Color.LightGray) }
+                            IconButton(onClick = { val p = MutableList(5) { "" }.apply { set(subTab, s) }; list.remove(s); onAction("Settings", "delete", p, p) }) { Icon(Icons.Default.Delete, null, tint = Color.Red) }
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+fun SecuritySettings(onAction: (String, String, List<String?>, List<String?>?) -> Unit) {
+    val context = LocalContext.current
+    var adminPw by remember { mutableStateOf(CacheManager.loadAdmin(context)) }
+    var appPin by remember { mutableStateOf(CacheManager.loadPin(context)) }
+    
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text("Security Settings", style = MaterialTheme.typography.titleLarge, color = Color(0xFFFF7D1E))
+        
+        OutlinedTextField(
+            value = adminPw,
+            onValueChange = { adminPw = it },
+            label = { Text("Admin Login Password") },
+            modifier = Modifier.fillMaxWidth(),
+            trailingIcon = { IconButton(onClick = { 
+                onAction("Admin", "update", listOf(adminPw, appPin), null)
+                CacheManager.saveAdmin(context, adminPw)
+            }) { Icon(Icons.Default.Save, null) } }
+        )
+
+        OutlinedTextField(
+            value = appPin,
+            onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) appPin = it },
+            label = { Text("App Unlock PIN (6 Digits)") },
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+            trailingIcon = { IconButton(onClick = { 
+                if (appPin.length == 6) {
+                    onAction("Admin", "update", listOf(adminPw, appPin), null)
+                    CacheManager.savePin(context, appPin)
+                } else {
+                    Toast.makeText(context, "PIN must be 6 digits", Toast.LENGTH_SHORT).show()
+                }
+            }) { Icon(Icons.Default.Save, null) } }
+        )
+        
+        Text("Note: Changes are synced to Google Sheets.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
     }
 }
 
@@ -661,6 +738,8 @@ object CacheManager {
     } catch (e: Exception) { null }
     fun saveAdmin(ctx: Context, pw: String) = File(ctx.filesDir, "admin_cache.txt").writeText(pw)
     fun loadAdmin(ctx: Context): String = try { val f = File(ctx.filesDir, "admin_cache.txt"); if (f.exists()) f.readText() else "" } catch (e: Exception) { "" }
+    fun savePin(ctx: Context, pin: String) = File(ctx.filesDir, "pin_cache.txt").writeText(pin)
+    fun loadPin(ctx: Context): String = try { val f = File(ctx.filesDir, "pin_cache.txt"); if (f.exists()) f.readText() else "041823" } catch (e: Exception) { "041823" }
     fun saveQueue(ctx: Context, q: List<PendingAction>) = File(ctx.filesDir, "queue_cache.json").writeText(Gson().toJson(q))
     fun loadQueue(ctx: Context): List<PendingAction> = try { val f = File(ctx.filesDir, "queue_cache.json"); if (f.exists()) Gson().fromJson(f.readText(), object : TypeToken<List<PendingAction>>() {}.type) else emptyList() } catch (e: Exception) { emptyList() }
 }
