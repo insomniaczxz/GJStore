@@ -259,20 +259,28 @@ fun MainAppScreen() {
             pendingQueue.add(act); performAction(act)
 
             // Auto-add new dropdown options to Settings for faster product addition
-            val newBrand = finalized.brand.trim().takeIf { it.isNotBlank() && !dynamicSettings.brands.any { b -> b.equals(it, ignoreCase = true) } }
-            val newCat = finalized.category.trim().takeIf { it.isNotBlank() && !dynamicSettings.categories.any { c -> c.equals(it, ignoreCase = true) } }
-            val newUnit = finalized.unit.trim().takeIf { it.isNotBlank() && !dynamicSettings.units.any { u -> u.equals(it, ignoreCase = true) } }
-            val newStore = finalized.lastBoughtStore.trim().takeIf { it.isNotBlank() && !dynamicSettings.stores.any { s -> s.equals(it, ignoreCase = true) } }
+            val newSettings = listOf(
+                0 to finalized.brand.trim().takeIf { it.isNotBlank() && !dynamicSettings.brands.any { b -> b.equals(it, ignoreCase = true) } },
+                1 to finalized.category.trim().takeIf { it.isNotBlank() && !dynamicSettings.categories.any { c -> c.equals(it, ignoreCase = true) } },
+                2 to finalized.unit.trim().takeIf { it.isNotBlank() && !dynamicSettings.units.any { u -> u.equals(it, ignoreCase = true) } },
+                3 to finalized.lastBoughtStore.trim().takeIf { it.isNotBlank() && !dynamicSettings.stores.any { s -> s.equals(it, ignoreCase = true) } }
+            )
 
-            if (newBrand != null || newCat != null || newUnit != null || newStore != null) {
-                newBrand?.let { dynamicSettings.brands.add(it) }
-                newCat?.let { dynamicSettings.categories.add(it) }
-                newUnit?.let { dynamicSettings.units.add(it) }
-                newStore?.let { dynamicSettings.stores.add(it) }
-                
-                val settingsData = listOf(newBrand ?: "", newCat ?: "", newUnit ?: "", newStore ?: "", "")
-                val settingsAct = PendingAction("Settings", "add", settingsData)
-                pendingQueue.add(settingsAct); performAction(settingsAct)
+            newSettings.forEach { (index, value) ->
+                if (value != null) {
+                    when (index) {
+                        0 -> dynamicSettings.brands.add(value)
+                        1 -> dynamicSettings.categories.add(value)
+                        2 -> dynamicSettings.units.add(value)
+                        3 -> dynamicSettings.stores.add(value)
+                    }
+                    val settingsData = MutableList(5) { "" }.apply { set(index, value) }
+                    val settingsAct = PendingAction("Settings", "add", settingsData)
+                    pendingQueue.add(settingsAct); performAction(settingsAct)
+                }
+            }
+
+            if (newSettings.any { it.second != null }) {
                 coroutineScope.launch(Dispatchers.IO) { CacheManager.saveSettings(context, dynamicSettings) }
             }
 
