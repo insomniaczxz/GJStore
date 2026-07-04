@@ -17,7 +17,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -104,6 +107,31 @@ fun MainAppScreen() {
         }
     }
 
+    suspend fun refreshData() {
+        isLoading = true; isEventsLoading = true
+        try {
+            val pRes = RetrofitClient.apiService.readSheet("Products")
+            if (pRes.isSuccessful) {
+                val newP = DataParser.parseProducts(pRes.body())
+                productsList.clear(); productsList.addAll(newP)
+                withContext(Dispatchers.IO) { CacheManager.saveProducts(context, newP) }
+            }
+            val sRes = RetrofitClient.apiService.readSheet("Settings")
+            if (sRes.isSuccessful) {
+                DataParser.parseSettings(sRes.body(), dynamicSettings)
+                withContext(Dispatchers.IO) { CacheManager.saveSettings(context, dynamicSettings) }
+            }
+            val eRes = RetrofitClient.apiService.readSheet("Events")
+            if (eRes.isSuccessful) {
+                val newE = DataParser.parseEvents(eRes.body())
+                eventsList.clear(); eventsList.addAll(newE)
+                withContext(Dispatchers.IO) { CacheManager.saveEvents(context, newE) }
+            }
+        } catch (e: Exception) { 
+            withContext(Dispatchers.Main) { Toast.makeText(context, "Refresh Failed", Toast.LENGTH_SHORT).show() }
+        } finally { isLoading = false; isEventsLoading = false }
+    }
+
     fun performAction(action: PendingAction) {
         coroutineScope.launch {
             try {
@@ -144,24 +172,8 @@ fun MainAppScreen() {
                 pendingQueue.toList().forEach { performAction(it) }
             }
         }
+        refreshData()
         try {
-            val pRes = RetrofitClient.apiService.readSheet("Products")
-            if (pRes.isSuccessful) {
-                val newP = DataParser.parseProducts(pRes.body())
-                productsList.clear(); productsList.addAll(newP)
-                withContext(Dispatchers.IO) { CacheManager.saveProducts(context, newP) }
-            }
-            val sRes = RetrofitClient.apiService.readSheet("Settings")
-            if (sRes.isSuccessful) {
-                DataParser.parseSettings(sRes.body(), dynamicSettings)
-                withContext(Dispatchers.IO) { CacheManager.saveSettings(context, dynamicSettings) }
-            }
-            val eRes = RetrofitClient.apiService.readSheet("Events")
-            if (eRes.isSuccessful) {
-                val newE = DataParser.parseEvents(eRes.body())
-                eventsList.clear(); eventsList.addAll(newE)
-                withContext(Dispatchers.IO) { CacheManager.saveEvents(context, newE) }
-            }
             val aRes = RetrofitClient.apiService.readSheet("Admin")
             if (aRes.isSuccessful) {
                 val row = aRes.body()?.getOrNull(1)
@@ -171,8 +183,7 @@ fun MainAppScreen() {
                     withContext(Dispatchers.Main) { appPin = it }
                 }
             }
-        } catch (e: Exception) { Toast.makeText(context, "Working Offline", Toast.LENGTH_SHORT).show() }
-        finally { isLoading = false; isEventsLoading = false }
+        } catch (e: Exception) {}
     }
 
     if (isAppLocked) {
@@ -180,54 +191,120 @@ fun MainAppScreen() {
     } else {
         Scaffold(
             topBar = {
-                Column {
-                    TopAppBar(
-                        title = { Row { Text("GJStore"); if (pendingQueue.isNotEmpty()) Text(" (Syncing...)", color = Color.Gray, style = MaterialTheme.typography.labelSmall) } },
-                        actions = { Button(onClick = { if (isAdminLoggedIn) isAdminLoggedIn = false else showLoginDialog = true }) { Text(if (isAdminLoggedIn) "Logout" else "Admin") } }
-                    )
-                    if (isAdminLoggedIn) TabRow(selectedTabIndex = currentAdminTab) { adminTabs.forEachIndexed { i, t -> Tab(selected = currentAdminTab == i, onClick = { currentAdminTab = i }, text = { Text(t) }) } }
+                Surface(tonalElevation = 3.dp) {
+                    Column {
+                        CenterAlignedTopAppBar(
+                            title = {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text("G&J Sari-sari Store", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                                    if (pendingQueue.isNotEmpty()) {
+                                        Text("Syncing...", color = Color(0xFFFF7D1E), style = MaterialTheme.typography.labelSmall)
+                                    }
+                                }
+                            },
+                            actions = {
+                                IconButton(
+                                    onClick = { if (isAdminLoggedIn) isAdminLoggedIn = false else showLoginDialog = true },
+                                    modifier = Modifier.size(56.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (isAdminLoggedIn) Icons.AutoMirrored.Filled.Logout else Icons.Default.AdminPanelSettings,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(32.dp)
+                                    )
+                                }
+                            },
+                            navigationIcon = {
+                                if (!isAdminLoggedIn) {
+                                    IconButton(onClick = { showEventHistoryDialog = true }) {
+                                        Icon(Icons.AutoMirrored.Filled.EventNote, null)
+                                    }
+                                }
+                            }
+                        )
+                        if (isAdminLoggedIn) {
+                            SecondaryTabRow(
+                                selectedTabIndex = currentAdminTab,
+                                containerColor = Color.Transparent,
+                                divider = {}
+                            ) {
+                                adminTabs.forEachIndexed { i, t ->
+                                    Tab(
+                                        selected = currentAdminTab == i,
+                                        onClick = { currentAdminTab = i },
+                                        text = { Text(t, style = MaterialTheme.typography.labelLarge) }
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             },
             floatingActionButton = {
                 if (isAdminLoggedIn && (currentAdminTab == 0 || currentAdminTab == 3)) {
-                    FloatingActionButton(onClick = { if (currentAdminTab == 0) { editingProduct = null; showFormDialog = true } else showEventDialog = true }) { Icon(Icons.Default.Add, null) }
+                    ExtendedFloatingActionButton(
+                        onClick = { if (currentAdminTab == 0) { editingProduct = null; showFormDialog = true } else showEventDialog = true },
+                        icon = { Icon(Icons.Default.Add, null) },
+                        text = { Text(if (currentAdminTab == 0) "Product" else "Event") },
+                        containerColor = Color(0xFFFF7D1E),
+                        contentColor = Color.White
+                    )
                 }
             }
         ) { paddingValues ->
-            Column(modifier = Modifier.fillMaxSize().padding(paddingValues).background(MaterialTheme.colorScheme.background)) {
-                if (isLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-
-                if (!isAdminLoggedIn) {
-                    UserDashboard(searchQuery, { searchQuery = it }, filteredProducts, { showEventHistoryDialog = true }, { updated ->
-                        val idx = productsList.indexOfFirst { it.id == updated.id }
-                        if (idx != -1) {
-                            productsList[idx] = updated
-                            val act = PendingAction("Products", "update", DataParser.productToRow(updated))
-                            pendingQueue.add(act); performAction(act)
-                            coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
-                            Toast.makeText(context, "Stock Updated", Toast.LENGTH_SHORT).show()
-                        }
-                    })
-                } else {
-                    AdminDashboard(productsList, dynamicSettings, eventsList, isEventsLoading, currentAdminTab, { target, action ->
-                        val data = DataParser.productToRow(target)
-                        val act = PendingAction("Products", action, data)
-                        pendingQueue.add(act); performAction(act)
-                        coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
-                        Toast.makeText(context, "Product ${action.replaceFirstChar { it.uppercase() }}d", Toast.LENGTH_SHORT).show()
-                    }, { editingProduct = it; showFormDialog = true }, { editingEvent = it; showEventDialog = true }, { event ->
-                        eventsList.remove(event)
-                        val data = DataParser.eventToRow(event)
-                        val act = PendingAction("Events", "delete", data, data)
-                        pendingQueue.add(act); performAction(act)
-                        coroutineScope.launch(Dispatchers.IO) { CacheManager.saveEvents(context, eventsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
-                        Toast.makeText(context, "Event Deleted", Toast.LENGTH_SHORT).show()
-                    }, { sheet, action, data, oldData ->
-                        val act = PendingAction(sheet, action, data, oldData)
-                        pendingQueue.add(act); performAction(act)
-                        coroutineScope.launch(Dispatchers.IO) { CacheManager.saveSettings(context, dynamicSettings); CacheManager.saveQueue(context, pendingQueue.toList()) }
-                        Toast.makeText(context, "Settings updated", Toast.LENGTH_SHORT).show()
-                    })
+            Box(modifier = Modifier.fillMaxSize().padding(paddingValues).background(MaterialTheme.colorScheme.background)) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    if (!isAdminLoggedIn) {
+                        UserDashboard(
+                            searchQuery, 
+                            { searchQuery = it }, 
+                            filteredProducts, 
+                            isLoading,
+                            { coroutineScope.launch { refreshData() } },
+                            { updated ->
+                                val idx = productsList.indexOfFirst { it.id == updated.id }
+                                if (idx != -1) {
+                                    productsList[idx] = updated
+                                    val act = PendingAction("Products", "update", DataParser.productToRow(updated))
+                                    pendingQueue.add(act); performAction(act)
+                                    coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
+                                    Toast.makeText(context, "Stock Updated", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        )
+                    } else {
+                        AdminDashboard(
+                            productsList, 
+                            dynamicSettings, 
+                            eventsList, 
+                            isLoading, 
+                            currentAdminTab, 
+                            { coroutineScope.launch { refreshData() } },
+                            { target, action ->
+                                val data = DataParser.productToRow(target)
+                                val act = PendingAction("Products", action, data)
+                                pendingQueue.add(act); performAction(act)
+                                coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
+                                Toast.makeText(context, "Product ${action.replaceFirstChar { it.uppercase() }}d", Toast.LENGTH_SHORT).show()
+                            }, 
+                            { editingProduct = it; showFormDialog = true }, 
+                            { editingEvent = it; showEventDialog = true }, 
+                            { event ->
+                                eventsList.remove(event)
+                                val data = DataParser.eventToRow(event)
+                                val act = PendingAction("Events", "delete", data, data)
+                                pendingQueue.add(act); performAction(act)
+                                coroutineScope.launch(Dispatchers.IO) { CacheManager.saveEvents(context, eventsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
+                                Toast.makeText(context, "Event Deleted", Toast.LENGTH_SHORT).show()
+                            }, 
+                            { sheet, action, data, oldData ->
+                                val act = PendingAction(sheet, action, data, oldData)
+                                pendingQueue.add(act); performAction(act)
+                                coroutineScope.launch(Dispatchers.IO) { CacheManager.saveSettings(context, dynamicSettings); CacheManager.saveQueue(context, pendingQueue.toList()) }
+                                Toast.makeText(context, "Settings updated", Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -296,75 +373,237 @@ fun PinLockScreen(correctPin: String, onCorrectPin: () -> Unit) {
     var pinInput by remember { mutableStateOf("") }
     val pinToMatch = correctPin.ifBlank { "041823" }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF121212))
-            .padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Icon(
-            imageVector = Icons.Default.Lock,
-            contentDescription = null,
-            modifier = Modifier.size(64.dp),
-            tint = Color(0xFFFF7D1E)
-        )
-        Spacer(modifier = Modifier.height(24.dp))
-        Text(
-            text = "Enter App PIN",
-            style = MaterialTheme.typography.headlineMedium,
-            color = Color.White,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        OutlinedTextField(
-            value = pinInput,
-            onValueChange = {
-                if (it.length <= 6 && it.all { char -> char.isDigit() }) {
-                    pinInput = it
-                    if (it == pinToMatch) onCorrectPin()
+    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF0F0F0F))) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Surface(
+                shape = androidx.compose.foundation.shape.CircleShape,
+                color = Color(0xFFFF7D1E).copy(alpha = 0.1f),
+                modifier = Modifier.size(100.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = null,
+                    modifier = Modifier.padding(24.dp).size(48.dp),
+                    tint = Color(0xFFFF7D1E)
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(32.dp))
+            
+            Text(
+                text = "Welcome Back",
+                style = MaterialTheme.typography.headlineLarge,
+                color = Color.White,
+                fontWeight = FontWeight.ExtraBold
+            )
+            Text(
+                text = "Enter your PIN to continue",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.Gray
+            )
+            
+            Spacer(modifier = Modifier.height(48.dp))
+            
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                repeat(6) { index ->
+                    val isFilled = index < pinInput.length
+                    Box(
+                        modifier = Modifier
+                            .size(16.dp)
+                            .background(
+                                color = if (isFilled) Color(0xFFFF7D1E) else Color.DarkGray,
+                                shape = androidx.compose.foundation.shape.CircleShape
+                            )
+                    )
                 }
-            },
-            label = { Text("6-Digit PIN") },
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-            modifier = Modifier.width(200.dp),
-            textStyle = LocalTextStyle.current.copy(
-                textAlign = TextAlign.Center,
-                fontSize = 20.sp,
-                letterSpacing = 8.sp
-            ),
-            singleLine = true
-        )
+            }
+
+            Spacer(modifier = Modifier.height(48.dp))
+
+            // Number Pad
+            val numbers = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "DEL")
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                for (i in 0 until 4) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                        for (j in 0 until 3) {
+                            val text = numbers[i * 3 + j]
+                            if (text.isNotEmpty()) {
+                                PinButton(text) {
+                                    if (text == "DEL") {
+                                        if (pinInput.isNotEmpty()) pinInput = pinInput.dropLast(1)
+                                    } else if (pinInput.length < 6) {
+                                        pinInput += text
+                                        if (pinInput == pinToMatch) onCorrectPin()
+                                    }
+                                }
+                            } else {
+                                Spacer(modifier = Modifier.size(72.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
 @Composable
-fun UserDashboard(searchQuery: String, onSearchQueryChange: (String) -> Unit, filteredProducts: List<Product>, onEventHistoryRequested: () -> Unit, onProductUpdated: (Product) -> Unit) {
-    Column(modifier = Modifier.padding(16.dp)) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(value = searchQuery, onValueChange = onSearchQueryChange, label = { Text("Search...") }, modifier = Modifier.weight(1f))
-            Button(onClick = onEventHistoryRequested, modifier = Modifier.padding(top = 8.dp).height(40.dp)) { Text("Events") }
+fun PinButton(text: String, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = androidx.compose.foundation.shape.CircleShape,
+        color = if (text == "DEL") Color.Transparent else Color(0xFF1E1E1E),
+        modifier = Modifier.size(72.dp)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            if (text == "DEL") {
+                Icon(Icons.AutoMirrored.Filled.Backspace, contentDescription = null, tint = Color.LightGray)
+            } else {
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = Color.White,
+                    fontWeight = FontWeight.Medium
+                )
+            }
         }
-        Spacer(modifier = Modifier.height(16.dp))
-        LazyColumn {
-            items(filteredProducts) { product ->
-                var showDialog by remember { mutableStateOf(false) }
-                Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { showDialog = true }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text("${product.name} ${product.formattedSize}${product.unit}", style = MaterialTheme.typography.titleLarge)
-                        Text(product.brand, style = MaterialTheme.typography.bodyMedium)
-                        Text("₱${product.price}", color = Color(0xFF00FF87), style = MaterialTheme.typography.titleMedium)
-                        Text("Stock: ${product.stock}", color = if (product.stock <= product.threshold) Color.Red else Color.White)
-                    }
-                }
-                if (showDialog) {
-                    var newStock by remember { mutableStateOf(product.stock.toString()) }
-                    AlertDialog(onDismissRequest = { showDialog = false }, title = { Text("Update Stock") }, text = { OutlinedTextField(newStock, { if (it.all { c -> c.isDigit() }) newStock = it }, label = { Text("Stock") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)) }, confirmButton = { TextButton(onClick = { onProductUpdated(product.copy(stock = newStock.toIntOrNull() ?: product.stock)); showDialog = false }) { Text("Update") } }, dismissButton = { TextButton(onClick = { showDialog = false }) { Text("Cancel") } })
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun UserDashboard(
+    searchQuery: String, 
+    onSearchQueryChange: (String) -> Unit, 
+    filteredProducts: List<Product>, 
+    isLoading: Boolean,
+    onRefresh: () -> Unit,
+    onProductUpdated: (Product) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+            SearchBar(
+                inputField = {
+                    SearchBarDefaults.InputField(
+                        query = searchQuery,
+                        onQueryChange = onSearchQueryChange,
+                        onSearch = { },
+                        expanded = false,
+                        onExpandedChange = { },
+                        placeholder = { Text("Search products, brands...") },
+                        leadingIcon = { Icon(Icons.Default.Search, null) },
+                        trailingIcon = { if (searchQuery.isNotEmpty()) IconButton(onClick = { onSearchQueryChange("") }) { Icon(Icons.Default.Close, null) } },
+                    )
+                },
+                expanded = false,
+                onExpandedChange = { },
+                modifier = Modifier.fillMaxWidth().offset(y = (-12).dp)
+            ) { }
+        }
+
+        PullToRefreshBox(
+            isRefreshing = isLoading,
+            onRefresh = onRefresh,
+            modifier = Modifier.fillMaxSize().offset(y = (-12).dp)
+        ) {
+            LazyColumn(
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(filteredProducts, key = { it.id }) { product ->
+                    ProductCard(product, onProductUpdated)
                 }
             }
         }
+    }
+}
+
+@Composable
+fun ProductCard(product: Product, onProductUpdated: (Product) -> Unit) {
+    var showDialog by remember { mutableStateOf(false) }
+    val isLowStock = product.stock <= product.threshold
+
+    ElevatedCard(
+        onClick = { showDialog = true },
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+        ),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "${product.name} ${product.formattedSize}${product.unit}",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = product.brand,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray
+                )
+            }
+            
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = "₱${product.price}",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color(0xFF00FF87),
+                    fontWeight = FontWeight.Bold
+                )
+                Surface(
+                    shape = androidx.compose.foundation.shape.CircleShape,
+                    color = if (isLowStock) Color.Red.copy(alpha = 0.1f) else Color.Gray.copy(alpha = 0.1f)
+                ) {
+                    Text(
+                        text = "Stock: ${product.stock}",
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isLowStock) Color.Red else Color.White
+                    )
+                }
+            }
+        }
+    }
+
+    if (showDialog) {
+        var newStock by remember { mutableStateOf(product.stock.toString()) }
+        AlertDialog(
+            onDismissRequest = { showDialog = false },
+            title = { Text("Update Stock") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Text(product.name, style = MaterialTheme.typography.bodyLarge)
+                    OutlinedTextField(
+                        value = newStock,
+                        onValueChange = { if (it.all { c -> c.isDigit() }) newStock = it },
+                        label = { Text("New Stock Quantity") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onProductUpdated(product.copy(stock = newStock.toIntOrNull() ?: product.stock))
+                        showDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF7D1E))
+                ) { Text("Update") }
+            },
+            dismissButton = { TextButton(onClick = { showDialog = false }) { Text("Cancel") } }
+        )
     }
 }
 
@@ -377,36 +616,84 @@ fun AdminLoginDialog(onDismiss: () -> Unit, onLoginSuccess: () -> Unit) {
 }
 
 @Composable
-fun AdminDashboard(products: MutableList<Product>, settings: DropdownSettings, eventsList: MutableList<Event>, isEventsLoading: Boolean, currentAdminTab: Int, onUpdateSheet: (Product, String) -> Unit, onEditProductRequested: (Product) -> Unit, onEditEventRequested: (Event) -> Unit, onDeleteEvent: (Event) -> Unit, onSettingsAction: (String, String, List<String?>, List<String?>?) -> Unit) {
+fun AdminDashboard(
+    products: MutableList<Product>, 
+    settings: DropdownSettings, 
+    eventsList: MutableList<Event>, 
+    isLoading: Boolean, 
+    currentAdminTab: Int, 
+    onRefresh: () -> Unit,
+    onUpdateSheet: (Product, String) -> Unit, 
+    onEditProductRequested: (Product) -> Unit, 
+    onEditEventRequested: (Event) -> Unit, 
+    onDeleteEvent: (Event) -> Unit, 
+    onSettingsAction: (String, String, List<String?>, List<String?>?) -> Unit
+) {
     Column(modifier = Modifier.fillMaxSize()) {
         when (currentAdminTab) {
-            0 -> AdminProductList(products, onEditProductRequested, { p -> products.remove(p); onUpdateSheet(p, "delete") })
+            0 -> AdminProductList(products, isLoading, onRefresh, onEditProductRequested, { p -> products.remove(p); onUpdateSheet(p, "delete") })
             1 -> ShouldRebuyScreen(products)
             2 -> DropdownSettingsManager(settings, onSettingsAction)
-            3 -> AdminEventsScreen(eventsList, isEventsLoading, onEditEventRequested, onDeleteEvent)
+            3 -> AdminEventsScreen(eventsList, isLoading, onRefresh, onEditEventRequested, onDeleteEvent)
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AdminProductList(products: List<Product>, onEdit: (Product) -> Unit, onDelete: (Product) -> Unit) {
+fun AdminProductList(products: List<Product>, isLoading: Boolean, onRefresh: () -> Unit, onEdit: (Product) -> Unit, onDelete: (Product) -> Unit) {
     var query by remember { mutableStateOf("") }
     val filtered by remember { derivedStateOf { products.filter { it.name.contains(query, true) || it.brand.contains(query, true) || it.category.contains(query, true) }.sortedBy { it.name.lowercase() } } }
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        OutlinedTextField(query, { query = it }, label = { Text("Search Inventory") }, modifier = Modifier.fillMaxWidth())
-        LazyColumn {
-            items(filtered) { p ->
-                Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                    Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("${p.name} ${p.formattedSize}${p.unit}", style = MaterialTheme.typography.titleLarge)
-                            Text("Price: ₱${p.price} (Cost: ₱${p.cost})", color = Color(0xFF00FF87))
-                            if (p.lastBoughtStore.isNotBlank()) {
-                                Text("Store: ${p.lastBoughtStore}", style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
+    
+    Column(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+            SearchBar(
+                inputField = {
+                    SearchBarDefaults.InputField(
+                        query = query,
+                        onQueryChange = { query = it },
+                        onSearch = { },
+                        expanded = false,
+                        onExpandedChange = { },
+                        placeholder = { Text("Search Inventory...") },
+                        leadingIcon = { Icon(Icons.Default.Inventory, null) },
+                        trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Default.Close, null) } },
+                    )
+                },
+                expanded = false,
+                onExpandedChange = { },
+                modifier = Modifier.fillMaxWidth().offset(y = (-12).dp)
+            ) { }
+        }
+
+        PullToRefreshBox(
+            isRefreshing = isLoading,
+            onRefresh = onRefresh,
+            modifier = Modifier.fillMaxSize().offset(y = (-12).dp)
+        ) {
+            LazyColumn(
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(filtered, key = { it.id }) { p ->
+                    ElevatedCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+                    ) {
+                        Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("${p.name} ${p.formattedSize}${p.unit}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                Text("₱${p.price} (Cost: ₱${p.cost})", color = Color(0xFF00FF87), style = MaterialTheme.typography.bodySmall)
+                                if (p.lastBoughtStore.isNotBlank()) {
+                                    Text("Store: ${p.lastBoughtStore}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                }
+                                Text("Stock: ${p.stock}", color = if (p.stock <= p.threshold) Color.Red else Color.White, style = MaterialTheme.typography.labelSmall)
                             }
-                            Text("Stock: ${p.stock}", color = if (p.stock <= p.threshold) Color.Red else Color.White)
+                            Row { 
+                                IconButton(onClick = { onEdit(p) }) { Icon(Icons.Default.Edit, null, tint = Color(0xFFFF7D1E)) }
+                                IconButton(onClick = { onDelete(p) }) { Icon(Icons.Default.Delete, null, tint = Color.Red) } 
+                            }
                         }
-                        Row { IconButton(onClick = { onEdit(p) }) { Icon(Icons.Default.Edit, null, tint = Color(0xFFFF7D1E)) }; IconButton(onClick = { onDelete(p) }) { Icon(Icons.Default.Delete, null, tint = Color.Red) } }
                     }
                 }
             }
@@ -417,9 +704,17 @@ fun AdminProductList(products: List<Product>, onEdit: (Product) -> Unit, onDelet
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AdminProductFormDialog(product: Product?, settings: DropdownSettings, onDismiss: () -> Unit, onSave: (Product) -> Unit) {
-    var name by remember { mutableStateOf(product?.name ?: "") }; var size by remember { mutableStateOf(product?.size?.toString() ?: "") }; var cost by remember { mutableStateOf(product?.cost?.toString() ?: "") }
-    var mVal by remember { mutableStateOf(product?.markupValue?.toString() ?: "") }; var stock by remember { mutableStateOf(product?.stock?.toString() ?: "") }; var thresh by remember { mutableStateOf(product?.threshold?.toString() ?: "") }
-    var brand by remember { mutableStateOf(product?.brand ?: "") }; var cat by remember { mutableStateOf(product?.category ?: "") }; var unit by remember { mutableStateOf(product?.unit ?: "") }; var store by remember { mutableStateOf(product?.lastBoughtStore ?: "") }; var mType by remember { mutableStateOf(product?.markupType ?: "Percentage") }
+    var name by remember { mutableStateOf(product?.name ?: "") }
+    var size by remember { mutableStateOf(product?.size?.toString() ?: "") }
+    var cost by remember { mutableStateOf(product?.cost?.toString() ?: "") }
+    var mVal by remember { mutableStateOf(product?.markupValue?.toString() ?: "") }
+    var stock by remember { mutableStateOf(product?.stock?.toString() ?: "") }
+    var thresh by remember { mutableStateOf(product?.threshold?.toString() ?: "") }
+    var brand by remember { mutableStateOf(product?.brand ?: "") }
+    var cat by remember { mutableStateOf(product?.category ?: "") }
+    var unit by remember { mutableStateOf(product?.unit ?: "") }
+    var store by remember { mutableStateOf(product?.lastBoughtStore ?: "") }
+    var mType by remember { mutableStateOf(product?.markupType ?: "Percentage") }
     var ideal by remember { mutableStateOf(product?.idealStock?.toString() ?: "") }
     var sellPrice by remember { mutableStateOf(product?.price?.let { kotlin.math.ceil(it).toInt().toString() } ?: "") }
 
@@ -445,42 +740,95 @@ fun AdminProductFormDialog(product: Product?, settings: DropdownSettings, onDism
         }
     }
 
-    AlertDialog(onDismissRequest = onDismiss, title = { Text(if (product == null) "Add Product" else "Edit Product") }, text = {
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            item {
-                OutlinedTextField(name, { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
-                DropdownField("Brand", brand, sortedBrands.value) { brand = it }; DropdownField("Category", cat, sortedCategories.value) { cat = it }; DropdownField("Unit", unit, sortedUnits.value) { unit = it }
-                OutlinedTextField(size, { size = it }, label = { Text("Size") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(cost, { cost = it; recalcPrice(newCost = it) }, label = { Text("Cost") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+    BasicAlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.fillMaxWidth().padding(16.dp)
+    ) {
+        Surface(
+            shape = MaterialTheme.shapes.extraLarge,
+            tonalElevation = 6.dp,
+            color = MaterialTheme.colorScheme.surface
+        ) {
+            Column(modifier = Modifier.padding(24.dp)) {
+                Text(
+                    text = if (product == null) "Add Product" else "Edit Product",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
                 
-                Text("Markup Type", style = MaterialTheme.typography.labelMedium)
-                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    RadioButton(mType == "Percentage", { mType = "Percentage"; recalcMarkup(sellPrice) }); Text(" Percentage (%) ")
-                    Spacer(modifier = Modifier.width(8.dp))
-                    RadioButton(mType == "Fixed", { mType = "Fixed"; recalcMarkup(sellPrice) }); Text(" Fixed (₱) ")
-                }
-                
-                OutlinedTextField(mVal, { mVal = it; recalcPrice(newMarkup = it) }, label = { Text("Markup Value") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(sellPrice, { sellPrice = it; recalcMarkup(it) }, label = { Text("Selling Price") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.weight(1f, fill = false)
+                ) {
+                    item {
+                        OutlinedTextField(name, { name = it }, label = { Text("Product Name") }, modifier = Modifier.fillMaxWidth())
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Box(modifier = Modifier.weight(1f)) { DropdownField("Brand", brand, sortedBrands.value) { brand = it } }
+                            Box(modifier = Modifier.weight(1f)) { DropdownField("Category", cat, sortedCategories.value) { cat = it } }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Box(modifier = Modifier.weight(1f)) { DropdownField("Unit", unit, sortedUnits.value) { unit = it } }
+                            OutlinedTextField(size, { size = it }, label = { Text("Size") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+                        }
+                        
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        
+                        OutlinedTextField(cost, { cost = it; recalcPrice(newCost = it) }, label = { Text("Cost Price (₱)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth(), leadingIcon = { Icon(Icons.Default.Payments, null) })
+                        
+                        Text("Markup Type", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 8.dp))
+                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                            SegmentedButton(
+                                selected = mType == "Percentage",
+                                onClick = { mType = "Percentage"; recalcMarkup(sellPrice) },
+                                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
+                            ) { Text("Percentage (%)") }
+                            SegmentedButton(
+                                selected = mType == "Fixed",
+                                onClick = { mType = "Fixed"; recalcMarkup(sellPrice) },
+                                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+                            ) { Text("Fixed (₱)") }
+                        }
+                        
+                        OutlinedTextField(mVal, { mVal = it; recalcPrice(newMarkup = it) }, label = { Text("Markup Value") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(sellPrice, { sellPrice = it; recalcMarkup(it) }, label = { Text("Final Selling Price (₱)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth(), leadingIcon = { Icon(Icons.Default.Sell, null) })
 
-                OutlinedTextField(ideal, { if (it.all { c -> c.isDigit() }) ideal = it }, label = { Text("Ideal Stock") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(stock, { if (it.all { c -> c.isDigit() }) stock = it }, label = { Text("Stock") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(thresh, { if (it.all { c -> c.isDigit() }) thresh = it }, label = { Text("Threshold") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                DropdownField("Store", store, sortedStores.value) { store = it }
-            }
-        }
-    }, confirmButton = { 
-        Row {
-            if (product != null) {
-                TextButton(onClick = { onSave(Product(System.currentTimeMillis().toString(), name, brand, cat, unit, size.toDoubleOrNull() ?: 0.0, cost.toDoubleOrNull() ?: 0.0, store, mType, mVal.toDoubleOrNull() ?: 0.0, sellPrice.toDoubleOrNull() ?: 0.0, stock.toIntOrNull() ?: 0, thresh.toIntOrNull() ?: 0, SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()), ideal.toIntOrNull() ?: 0)) }) { 
-                    Text("Save as Other Item") 
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(stock, { if (it.all { c -> c.isDigit() }) stock = it }, label = { Text("Stock") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+                            OutlinedTextField(thresh, { if (it.all { c -> c.isDigit() }) thresh = it }, label = { Text("Threshold") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+                        }
+                        OutlinedTextField(ideal, { if (it.all { c -> c.isDigit() }) ideal = it }, label = { Text("Ideal Stock") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                        DropdownField("Store", store, sortedStores.value) { store = it }
+                    }
+                }
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Cancel") }
+                    if (product != null) {
+                        OutlinedButton(
+                            onClick = { 
+                                onSave(Product(System.currentTimeMillis().toString(), name, brand, cat, unit, size.toDoubleOrNull() ?: 0.0, cost.toDoubleOrNull() ?: 0.0, store, mType, mVal.toDoubleOrNull() ?: 0.0, sellPrice.toDoubleOrNull() ?: 0.0, stock.toIntOrNull() ?: 0, thresh.toIntOrNull() ?: 0, SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()), ideal.toIntOrNull() ?: 0)) 
+                            },
+                            modifier = Modifier.weight(1.5f)
+                        ) { Text("Save as New", textAlign = TextAlign.Center) }
+                    }
+                    Button(
+                        onClick = { 
+                            onSave(Product(product?.id ?: System.currentTimeMillis().toString(), name, brand, cat, unit, size.toDoubleOrNull() ?: 0.0, cost.toDoubleOrNull() ?: 0.0, store, mType, mVal.toDoubleOrNull() ?: 0.0, sellPrice.toDoubleOrNull() ?: 0.0, stock.toIntOrNull() ?: 0, thresh.toIntOrNull() ?: 0, SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()), ideal.toIntOrNull() ?: 0)) 
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF7D1E)),
+                        modifier = Modifier.weight(1.5f)
+                    ) { Text("Save", textAlign = TextAlign.Center) }
                 }
             }
-            Button(onClick = { onSave(Product(product?.id ?: System.currentTimeMillis().toString(), name, brand, cat, unit, size.toDoubleOrNull() ?: 0.0, cost.toDoubleOrNull() ?: 0.0, store, mType, mVal.toDoubleOrNull() ?: 0.0, sellPrice.toDoubleOrNull() ?: 0.0, stock.toIntOrNull() ?: 0, thresh.toIntOrNull() ?: 0, SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()), ideal.toIntOrNull() ?: 0)) }) { 
-                Text("Save") 
-            }
         }
-    }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -488,9 +836,21 @@ fun AdminProductFormDialog(product: Product?, settings: DropdownSettings, onDism
 fun DropdownField(label: String, value: String, options: List<String>, onValueChange: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }, modifier = Modifier.fillMaxWidth()) {
-        OutlinedTextField(value, { onValueChange(it); expanded = true }, label = { Text(label) }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }, modifier = Modifier.menuAnchor())
+        OutlinedTextField(
+            value = value, 
+            onValueChange = { onValueChange(it); expanded = true }, 
+            label = { Text(label) }, 
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }, 
+            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable, true)
+        )
         val filtered = options.filter { it.contains(value, true) }
-        if (filtered.isNotEmpty()) { ExposedDropdownMenu(expanded, { expanded = false }) { filtered.forEach { DropdownMenuItem(text = { Text(it) }, onClick = { onValueChange(it); expanded = false }) } } }
+        if (filtered.isNotEmpty()) { 
+            ExposedDropdownMenu(expanded, { expanded = false }) { 
+                filtered.forEach { 
+                    DropdownMenuItem(text = { Text(it) }, onClick = { onValueChange(it); expanded = false }) 
+                } 
+            } 
+        }
     }
 }
 
@@ -498,9 +858,50 @@ fun DropdownField(label: String, value: String, options: List<String>, onValueCh
 fun ShouldRebuyScreen(products: List<Product>) {
     val list = products.filter { it.stock <= it.threshold }.sortedBy { it.name.lowercase() }
     val context = LocalContext.current
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        LazyColumn(modifier = Modifier.weight(1f)) { items(list) { p -> Card(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), colors = CardDefaults.cardColors(containerColor = Color(0x33FF0000))) { Row(modifier = Modifier.padding(12.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Column { Text(p.name); Text("${p.brand} | ${p.lastBoughtStore}", style = MaterialTheme.typography.bodySmall) }; Text("${p.stock} / ${p.threshold}", color = Color.Red) } } } }
-        Button(onClick = { exportManifest(context, list) }, modifier = Modifier.fillMaxWidth()) { Text("Export Manifest (.txt)") }
+    
+    Column(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.fillMaxWidth().background(Color.Red.copy(alpha = 0.1f)).padding(16.dp)) {
+            Text(
+                text = "${list.size} items are below threshold",
+                style = MaterialTheme.typography.titleMedium,
+                color = Color.Red,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) { 
+            items(list) { p -> 
+                ElevatedCard(
+                    modifier = Modifier.fillMaxWidth(), 
+                    colors = CardDefaults.elevatedCardColors(containerColor = Color(0x11FF0000))
+                ) { 
+                    Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { 
+                        Column { 
+                            Text(p.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text("${p.brand} | Last: ${p.lastBoughtStore}", style = MaterialTheme.typography.bodySmall, color = Color.Gray) 
+                        } 
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("${p.stock} / ${p.threshold}", color = Color.Red, fontWeight = FontWeight.Bold) 
+                            Text("Buy: ${p.idealStock - p.stock}", style = MaterialTheme.typography.labelSmall, color = Color.LightGray)
+                        }
+                    } 
+                } 
+            } 
+        }
+        
+        Button(
+            onClick = { exportManifest(context, list) }, 
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF7D1E))
+        ) { 
+            Icon(Icons.Default.Download, null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Export Manifest (.txt)") 
+        }
     }
 }
 
@@ -523,8 +924,8 @@ fun exportManifest(context: Context, list: List<Product>) {
         }.toString()
 
         // File 2: Detailed Rebuy Info
-        val fileName2 = "GJStore_Rebuy_$timestamp.txt"
-        val text2 = StringBuilder("GJSTORE REBUY DETAILS\n\n").apply {
+        val fileName2 = "G&J_Sari-sari_Store_Rebuy_$timestamp.txt"
+        val text2 = StringBuilder("G&J SARI-SARI STORE REBUY DETAILS\n\n").apply {
             grouped.forEach { (category, products) ->
                 append("--- ${category.ifBlank { "UNCATEGORIZED" }.uppercase()} ---\n")
                 products.sortedBy { it.name.lowercase() }.forEach {
@@ -558,22 +959,35 @@ private fun saveToDownloads(context: Context, fileName: String, content: String)
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AdminEventsScreen(events: List<Event>, isLoading: Boolean, onEdit: (Event) -> Unit, onDelete: (Event) -> Unit) {
-    if (isLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-    LazyColumn(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        items(events) { e ->
-            Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(e.dateCreated, style = MaterialTheme.typography.labelMedium)
-                            Text("₱${e.amount}", color = if (e.amount < 0) Color.Red else Color(0xFF00FF87))
+fun AdminEventsScreen(events: List<Event>, isLoading: Boolean, onRefresh: () -> Unit, onEdit: (Event) -> Unit, onDelete: (Event) -> Unit) {
+    PullToRefreshBox(
+        isRefreshing = isLoading,
+        onRefresh = onRefresh,
+        modifier = Modifier.fillMaxSize()
+    ) {
+        LazyColumn(
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            items(events) { e ->
+                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                    Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(e.dateCreated, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                Text("₱${e.amount}", color = if (e.amount < 0) Color.Red else Color(0xFF00FF87), fontWeight = FontWeight.Bold)
+                            }
+                            Text(e.details, style = MaterialTheme.typography.bodyLarge)
+                            Text("By: ${e.createdBy}${if (e.editedBy.isNotBlank()) " | Ed: ${e.editedBy} (${e.editedDate})" else ""}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
                         }
-                        Text(e.details)
-                        Text("By: ${e.createdBy}${if (e.editedBy.isNotBlank()) " | Ed: ${e.editedBy} (${e.editedDate})" else ""}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                        Row { 
+                            IconButton(onClick = { onEdit(e) }) { Icon(Icons.Default.Edit, null, tint = Color(0xFFFF7D1E)) }
+                            IconButton(onClick = { onDelete(e) }) { Icon(Icons.Default.Delete, null, tint = Color.Red) } 
+                        }
                     }
-                    Row { IconButton(onClick = { onEdit(e) }) { Icon(Icons.Default.Edit, null, tint = Color(0xFFFF7D1E)) }; IconButton(onClick = { onDelete(e) }) { Icon(Icons.Default.Delete, null, tint = Color.Red) } }
                 }
             }
         }
@@ -587,39 +1001,77 @@ fun DropdownSettingsManager(settings: DropdownSettings, onAction: (String, Strin
     var input by remember { mutableStateOf("") }; var editIdx by remember { mutableIntStateOf(-1) }; var oldVal by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope(); val context = LocalContext.current
     
-    if (subTab == 5) {
-        SecuritySettings(onAction)
-    } else {
-        val list = when(subTab) { 
-            0 -> settings.brands; 1 -> settings.categories; 2 -> settings.units; 3 -> settings.stores; else -> settings.messengerKeys 
+    Column(modifier = Modifier.fillMaxSize()) {
+        Surface(tonalElevation = 2.dp) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 8.dp)) {
+                ScrollableTabRow(
+                    selectedTabIndex = subTab, 
+                    edgePadding = 0.dp, 
+                    modifier = Modifier.weight(1f),
+                    containerColor = Color.Transparent,
+                    divider = {}
+                ) { 
+                    sections.forEachIndexed { i, t -> 
+                        Tab(subTab == i, { subTab = i; input = ""; editIdx = -1 }, text = { Text(t) }) 
+                    } 
+                }
+                IconButton(onClick = { updateApp(context, scope) }) { 
+                    Icon(Icons.Default.SystemUpdate, null, tint = Color(0xFFFF7D1E)) 
+                }
+            }
         }
-        val sortedList by remember(subTab) { derivedStateOf { list.sortedBy { it.lowercase() } } }
 
-        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                ScrollableTabRow(selectedTabIndex = subTab, edgePadding = 0.dp, modifier = Modifier.weight(1f)) { sections.forEachIndexed { i, t -> Tab(subTab == i, { subTab = i; input = ""; editIdx = -1 }, text = { Text(t) }) } }
-                IconButton(onClick = { updateApp(context, scope) }) { Icon(Icons.Default.SystemUpdate, null, tint = Color(0xFFFF7D1E)) }
+        if (subTab == 5) {
+            SecuritySettings(onAction)
+        } else {
+            val list = when(subTab) { 
+                0 -> settings.brands; 1 -> settings.categories; 2 -> settings.units; 3 -> settings.stores; else -> settings.messengerKeys 
             }
-            Spacer(modifier = Modifier.height(16.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                OutlinedTextField(input, { input = it }, label = { Text(if (editIdx == -1) "Add" else "Update") }, modifier = Modifier.weight(1f))
-                Button(onClick = {
-                    if (input.isNotBlank()) {
-                        val newVal = input.trim(); val payload = MutableList(5) { "" }.apply { set(subTab, newVal) }
-                        val action = if (editIdx == -1) "add" else "update"
-                        val oldPayload = if (editIdx != -1) MutableList(5) { "" }.apply { set(subTab, oldVal) } else null
-                        if (editIdx == -1) { if (!list.contains(newVal)) list.add(newVal) } else { list[editIdx] = newVal; editIdx = -1 }
-                        onAction("Settings", action, payload, oldPayload); input = ""
+            val sortedList by remember(subTab) { derivedStateOf { list.sortedBy { it.lowercase() } } }
+
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = input, 
+                        onValueChange = { input = it }, 
+                        label = { Text(if (editIdx == -1) "Add New" else "Update Entry") }, 
+                        modifier = Modifier.weight(1f),
+                        singleLine = true
+                    )
+                    Button(
+                        onClick = {
+                            if (input.isNotBlank()) {
+                                val newVal = input.trim(); val payload = MutableList(5) { "" }.apply { set(subTab, newVal) }
+                                val action = if (editIdx == -1) "add" else "update"
+                                val oldPayload = if (editIdx != -1) MutableList(5) { "" }.apply { set(subTab, oldVal) } else null
+                                if (editIdx == -1) { if (!list.contains(newVal)) list.add(newVal) } else { list[editIdx] = newVal; editIdx = -1 }
+                                onAction("Settings", action, payload, oldPayload); input = ""
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF7D1E))
+                    ) { 
+                        Text(if (editIdx == -1) "Add" else "Update") 
                     }
-                }) { Text(if (editIdx == -1) "Add" else "Update") }
-            }
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 16.dp)) {
-                items(sortedList) { s ->
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Row(modifier = Modifier.padding(12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                            Text(s, modifier = Modifier.weight(1f))
-                            IconButton(onClick = { editIdx = list.indexOf(s); input = s; oldVal = s }) { Icon(Icons.Default.Edit, null, tint = Color.LightGray) }
-                            IconButton(onClick = { val p = MutableList(5) { "" }.apply { set(subTab, s) }; list.remove(s); onAction("Settings", "delete", p, p) }) { Icon(Icons.Default.Delete, null, tint = Color.Red) }
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(sortedList) { s ->
+                        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                            Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(s, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                                IconButton(onClick = { editIdx = list.indexOf(s); input = s; oldVal = s }) { 
+                                    Icon(Icons.Default.Edit, null, tint = Color.LightGray) 
+                                }
+                                IconButton(onClick = { 
+                                    val p = MutableList(5) { "" }.apply { set(subTab, s) }
+                                    list.remove(s)
+                                    onAction("Settings", "delete", p, p) 
+                                }) { 
+                                    Icon(Icons.Default.Delete, null, tint = Color.Red) 
+                                }
+                            }
                         }
                     }
                 }
@@ -699,9 +1151,10 @@ fun updateApp(context: Context, scope: CoroutineScope) {
 
 @Composable
 fun EmployeeEventHistoryDialog(events: List<Event>, isLoading: Boolean, onDismiss: () -> Unit, onAddRequested: () -> Unit, onEditRequested: (Event) -> Unit) {
-    AlertDialog(onDismissRequest = onDismiss, title = { Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("History"); TextButton(onAddRequested) { Text("+ Add") } } }, text = { Column(modifier = Modifier.fillMaxHeight(0.7f)) { if (isLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth()); LazyColumn { items(events) { e -> Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) { Row(modifier = Modifier.padding(8.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { Column(modifier = Modifier.weight(1f)) { Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(e.dateCreated, style = MaterialTheme.typography.labelSmall); Text("₱${e.amount}", color = if (e.amount < 0) Color.Red else Color(0xFF00FF87)) }; Text(e.details, style = MaterialTheme.typography.bodySmall); Text("By: ${e.createdBy}${if (e.editedBy.isNotBlank()) " | Ed: ${e.editedBy}" else ""}", style = MaterialTheme.typography.labelSmall, color = Color.Gray) }; IconButton(onClick = { onEditRequested(e) }) { Icon(Icons.Default.Edit, null, tint = Color(0xFFFF7D1E)) } } } } } } }, confirmButton = { TextButton(onDismiss) { Text("Close") } })
+    AlertDialog(onDismissRequest = onDismiss, title = { Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Text("Events"); IconButton(onClick = onAddRequested) { Icon(Icons.AutoMirrored.Filled.NoteAdd, null, tint = Color(0xFFFF7D1E)) } } }, text = { Column(modifier = Modifier.fillMaxHeight(0.7f)) { if (isLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth()); LazyColumn { items(events) { e -> Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) { Row(modifier = Modifier.padding(8.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { Column(modifier = Modifier.weight(1f)) { Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(e.dateCreated, style = MaterialTheme.typography.labelSmall); Text("₱${e.amount}", color = if (e.amount < 0) Color.Red else Color(0xFF00FF87)) }; Text(e.details, style = MaterialTheme.typography.bodySmall); Text("By: ${e.createdBy}${if (e.editedBy.isNotBlank()) " | Ed: ${e.editedBy}" else ""}", style = MaterialTheme.typography.labelSmall, color = Color.Gray) }; IconButton(onClick = { onEditRequested(e) }) { Icon(Icons.Default.Edit, null, tint = Color(0xFFFF7D1E)) } } } } } } }, confirmButton = { TextButton(onDismiss) { Text("Close") } })
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EventEntryDialog(event: Event? = null, onDismiss: () -> Unit, onSave: (Event) -> Unit) {
     var details by remember { mutableStateOf(event?.details ?: "") }
@@ -709,26 +1162,64 @@ fun EventEntryDialog(event: Event? = null, onDismiss: () -> Unit, onSave: (Event
     var person by remember { mutableStateOf(if (event == null) "" else if (event.editedBy.isNotBlank()) event.editedBy else event.createdBy) }
     val dateDisplay = if (event == null) SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date()) else event.dateCreated
 
-    AlertDialog(onDismissRequest = onDismiss, title = { Text(if (event == null) "Add Event" else "Edit Event") }, text = { 
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { 
-            Text("Date: $dateDisplay")
-            OutlinedTextField(details, { details = it }, label = { Text("Details") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(
-                value = amount, 
-                onValueChange = { if (it.isEmpty() || it == "-" || it.toDoubleOrNull() != null) amount = it }, 
-                label = { Text("Amount") }, 
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), 
-                modifier = Modifier.fillMaxWidth()
-            )
-            OutlinedTextField(person, { person = it }, label = { Text(if (event == null) "Created By" else "Edited By") }, modifier = Modifier.fillMaxWidth())
+    BasicAlertDialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = MaterialTheme.shapes.extraLarge,
+            tonalElevation = 6.dp,
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxWidth().padding(16.dp)
+        ) {
+            Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text(
+                    text = if (event == null) "New Event" else "Edit Event",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                
+                Text("Date: $dateDisplay", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
+                
+                OutlinedTextField(
+                    value = details, 
+                    onValueChange = { details = it }, 
+                    label = { Text("Details / Description") }, 
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2
+                )
+                
+                OutlinedTextField(
+                    value = amount, 
+                    onValueChange = { if (it.isEmpty() || it == "-" || it.toDoubleOrNull() != null) amount = it }, 
+                    label = { Text("Amount (₱)") }, 
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), 
+                    modifier = Modifier.fillMaxWidth(),
+                    leadingIcon = { Icon(Icons.Default.AccountBalanceWallet, null) }
+                )
+                
+                OutlinedTextField(
+                    value = person, 
+                    onValueChange = { person = it }, 
+                    label = { Text(if (event == null) "Your Name (Created By)" else "Your Name (Edited By)") }, 
+                    modifier = Modifier.fillMaxWidth(),
+                    leadingIcon = { Icon(Icons.Default.Person, null) }
+                )
+                
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = { 
+                            val now = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date())
+                            val a = amount.toDoubleOrNull() ?: 0.0
+                            val finalized = if (event == null) Event(now, details, a, person, "", "") 
+                                            else event.copy(details = details, amount = a, editedBy = person, editedDate = now)
+                            onSave(finalized)
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF7D1E))
+                    ) { Text("Save Event") }
+                }
+            }
         }
-    }, confirmButton = { Button(onClick = { 
-        val now = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date())
-        val a = amount.toDoubleOrNull() ?: 0.0
-        val finalized = if (event == null) Event(now, details, a, person, "", "") 
-                        else event.copy(details = details, amount = a, editedBy = person, editedDate = now)
-        onSave(finalized)
-    }) { Text("Save") } }, dismissButton = { TextButton(onDismiss) { Text("Cancel") } })
+    }
 }
 
 object CacheManager {
