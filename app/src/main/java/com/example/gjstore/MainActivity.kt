@@ -1315,7 +1315,12 @@ fun updateApp(context: Context, scope: CoroutineScope) {
                 }
                 context.startActivity(intent)
             } else {
-                withContext(Dispatchers.Main) { Toast.makeText(context, "Update not found", Toast.LENGTH_SHORT).show() }
+                val errorMsg = when(conn.responseCode) {
+                    404 -> "Update file not found on GitHub"
+                    403 -> "Access denied by GitHub"
+                    else -> "Server error: ${conn.responseCode}"
+                }
+                withContext(Dispatchers.Main) { Toast.makeText(context, errorMsg, Toast.LENGTH_SHORT).show() }
             }
         } catch (e: Exception) { 
             withContext(Dispatchers.Main) { Toast.makeText(context, "Update Failed: ${e.message}", Toast.LENGTH_SHORT).show() } 
