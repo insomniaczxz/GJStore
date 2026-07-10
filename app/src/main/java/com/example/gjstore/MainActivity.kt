@@ -188,9 +188,13 @@ fun MainAppScreen() {
                     withContext(Dispatchers.Main) { appPin = it }
                 }
                 row?.getOrNull(2)?.let {
-                    val enabled = if (it.isBlank()) true else it.toBoolean()
+                    val enabled = if (it.isBlank()) true else it.trim().equals("true", ignoreCase = true)
                     CacheManager.savePinEnabled(context, enabled)
-                    withContext(Dispatchers.Main) { isPinEnabled = enabled }
+                    withContext(Dispatchers.Main) { 
+                        isPinEnabled = enabled 
+                        // Only lock if enabled
+                        if (!enabled) isAppLocked = false
+                    }
                 }
             }
         } catch (e: Exception) {}
