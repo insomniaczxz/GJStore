@@ -11,6 +11,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -75,7 +77,6 @@ fun MainAppScreen() {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     
-    var isAppLocked by remember { mutableStateOf(true) }
     var searchQuery by remember { mutableStateOf("") }
     var isAdminLoggedIn by remember { mutableStateOf(false) }
     var showLoginDialog by remember { mutableStateOf(false) }
@@ -96,6 +97,8 @@ fun MainAppScreen() {
     val dynamicSettings = remember { DropdownSettings() }
 
     var appPin by remember { mutableStateOf(CacheManager.loadPin(context)) }
+    var isPinEnabled by remember { mutableStateOf(CacheManager.loadPinEnabled(context)) }
+    var isAppLocked by remember { mutableStateOf(isPinEnabled) }
 
     val filteredProducts by remember {
         derivedStateOf {
@@ -159,9 +162,11 @@ fun MainAppScreen() {
             val cachedSettings = CacheManager.loadSettings(context)
             val cachedQueue = CacheManager.loadQueue(context)
             val cachedPin = CacheManager.loadPin(context)
+            val cachedPinEnabled = CacheManager.loadPinEnabled(context)
             withContext(Dispatchers.Main) {
                 productsList.addAll(cachedProducts); eventsList.addAll(cachedEvents); pendingQueue.addAll(cachedQueue)
                 appPin = cachedPin
+                isPinEnabled = cachedPinEnabled
                 cachedSettings?.let {
                     dynamicSettings.brands.clear(); dynamicSettings.brands.addAll(it.brands)
                     dynamicSettings.categories.clear(); dynamicSettings.categories.addAll(it.categories)
@@ -182,11 +187,16 @@ fun MainAppScreen() {
                     CacheManager.savePin(context, it)
                     withContext(Dispatchers.Main) { appPin = it }
                 }
+                row?.getOrNull(2)?.let {
+                    val enabled = if (it.isBlank()) true else it.toBoolean()
+                    CacheManager.savePinEnabled(context, enabled)
+                    withContext(Dispatchers.Main) { isPinEnabled = enabled }
+                }
             }
         } catch (e: Exception) {}
     }
 
-    if (isAppLocked) {
+    if (isAppLocked && isPinEnabled) {
         PinLockScreen(appPin, onCorrectPin = { isAppLocked = false })
     } else {
         Scaffold(
@@ -196,7 +206,7 @@ fun MainAppScreen() {
                         CenterAlignedTopAppBar(
                             title = {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("G&J Sari-sari Store", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                                    Text("G&J Sari-Sari Store", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                                     if (pendingQueue.isNotEmpty()) {
                                         Text("Syncing...", color = Color(0xFFFF7D1E), style = MaterialTheme.typography.labelSmall)
                                     }
@@ -270,6 +280,18 @@ fun MainAppScreen() {
                                     coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
                                     Toast.makeText(context, "Stock Updated", Toast.LENGTH_SHORT).show()
                                 }
+                            },
+                            { updatedList ->
+                                updatedList.forEach { updated ->
+                                    val idx = productsList.indexOfFirst { it.id == updated.id }
+                                    if (idx != -1) {
+                                        productsList[idx] = updated
+                                        val act = PendingAction("Products", "update", DataParser.productToRow(updated))
+                                        pendingQueue.add(act); performAction(act)
+                                    }
+                                }
+                                coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
+                                Toast.makeText(context, "Stocks Updated", Toast.LENGTH_SHORT).show()
                             }
                         )
                     } else {
@@ -302,7 +324,9 @@ fun MainAppScreen() {
                                 pendingQueue.add(act); performAction(act)
                                 coroutineScope.launch(Dispatchers.IO) { CacheManager.saveSettings(context, dynamicSettings); CacheManager.saveQueue(context, pendingQueue.toList()) }
                                 Toast.makeText(context, "Settings updated", Toast.LENGTH_SHORT).show()
-                            }
+                            },
+                            isPinEnabled,
+                            { isPinEnabled = it }
                         )
                     }
                 }
@@ -484,40 +508,76 @@ fun UserDashboard(
     filteredProducts: List<Product>, 
     isLoading: Boolean,
     onRefresh: () -> Unit,
-    onProductUpdated: (Product) -> Unit
+    onProductUpdated: (Product) -> Unit,
+    onBatchUpdate: (List<Product>) -> Unit
 ) {
+    var isBatchMode by remember { mutableStateOf(false) }
+    val batchChanges = remember { mutableStateMapOf<String, String>() }
+
     Column(modifier = Modifier.fillMaxSize()) {
-        Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-            SearchBar(
-                inputField = {
-                    SearchBarDefaults.InputField(
-                        query = searchQuery,
-                        onQueryChange = onSearchQueryChange,
-                        onSearch = { },
-                        expanded = false,
-                        onExpandedChange = { },
-                        placeholder = { Text("Search products, brands...") },
-                        leadingIcon = { Icon(Icons.Default.Search, null) },
-                        trailingIcon = { if (searchQuery.isNotEmpty()) IconButton(onClick = { onSearchQueryChange("") }) { Icon(Icons.Default.Close, null) } },
-                    )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = onSearchQueryChange,
+                placeholder = { Text("Search products, brands...", style = MaterialTheme.typography.bodyMedium) },
+                leadingIcon = { Icon(Icons.Default.Search, null) },
+                trailingIcon = { if (searchQuery.isNotEmpty()) IconButton(onClick = { onSearchQueryChange("") }) { Icon(Icons.Default.Close, null) } },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                shape = MaterialTheme.shapes.medium,
+                colors = OutlinedTextFieldDefaults.colors(
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                    focusedContainerColor = MaterialTheme.colorScheme.surface
+                )
+            )
+            IconButton(
+                onClick = { 
+                    isBatchMode = !isBatchMode
+                    if (!isBatchMode) batchChanges.clear()
                 },
-                expanded = false,
-                onExpandedChange = { },
-                modifier = Modifier.fillMaxWidth().offset(y = (-12).dp)
-            ) { }
+                modifier = Modifier.padding(start = 8.dp)
+            ) {
+                Icon(
+                    imageVector = if (isBatchMode) Icons.Default.Close else Icons.Default.Edit,
+                    contentDescription = null,
+                    tint = if (isBatchMode) Color(0xFFFF7D1E) else Color.White
+                )
+            }
+        }
+
+        if (isBatchMode) {
+            Button(
+                onClick = {
+                    val updatedProducts = batchChanges.mapNotNull { (id, stockStr) ->
+                        val product = filteredProducts.find { it.id == id }
+                        product?.copy(stock = stockStr.toIntOrNull() ?: product.stock)
+                    }
+                    onBatchUpdate(updatedProducts)
+                    isBatchMode = false
+                    batchChanges.clear()
+                },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 8.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF7D1E)),
+                enabled = batchChanges.isNotEmpty()
+            ) {
+                Text("Save All Changes")
+            }
         }
 
         PullToRefreshBox(
             isRefreshing = isLoading,
             onRefresh = onRefresh,
-            modifier = Modifier.fillMaxSize().offset(y = (-12).dp)
+            modifier = Modifier.fillMaxSize()
         ) {
             LazyColumn(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(filteredProducts, key = { it.id }) { product ->
-                    ProductCard(product, onProductUpdated)
+                    ProductCard(product, isBatchMode, batchChanges, onProductUpdated)
                 }
             }
         }
@@ -525,12 +585,12 @@ fun UserDashboard(
 }
 
 @Composable
-fun ProductCard(product: Product, onProductUpdated: (Product) -> Unit) {
+fun ProductCard(product: Product, isBatchMode: Boolean, batchChanges: MutableMap<String, String>, onProductUpdated: (Product) -> Unit) {
     var showDialog by remember { mutableStateOf(false) }
     val isLowStock = product.stock <= product.threshold
 
     ElevatedCard(
-        onClick = { showDialog = true },
+        onClick = { if (!isBatchMode) showDialog = true },
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.elevatedCardColors(
             containerColor = MaterialTheme.colorScheme.surface,
@@ -552,26 +612,46 @@ fun ProductCard(product: Product, onProductUpdated: (Product) -> Unit) {
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray
                 )
+                if (!isBatchMode) {
+                    Surface(
+                        shape = androidx.compose.foundation.shape.CircleShape,
+                        color = if (isLowStock) Color.Red.copy(alpha = 0.1f) else Color.Gray.copy(alpha = 0.1f),
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) {
+                        Text(
+                            text = "Stock: ${product.stock}",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isLowStock) Color.Red else Color.White
+                        )
+                    }
+                }
             }
             
-            Column(horizontalAlignment = Alignment.End) {
+            if (isBatchMode) {
+                val currentEdit = batchChanges[product.id] ?: product.stock.toString()
+                OutlinedTextField(
+                    value = currentEdit,
+                    onValueChange = { if (it.all { c -> c.isDigit() }) batchChanges[product.id] = it },
+                    modifier = Modifier.width(100.dp),
+                    label = { Text("Stock") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    trailingIcon = {
+                        if (currentEdit.isNotEmpty()) {
+                            IconButton(onClick = { batchChanges[product.id] = "" }) {
+                                Icon(Icons.Default.Close, null, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    },
+                    singleLine = true
+                )
+            } else {
                 Text(
                     text = "₱${product.price}",
                     style = MaterialTheme.typography.titleMedium,
                     color = Color(0xFF00FF87),
                     fontWeight = FontWeight.Bold
                 )
-                Surface(
-                    shape = androidx.compose.foundation.shape.CircleShape,
-                    color = if (isLowStock) Color.Red.copy(alpha = 0.1f) else Color.Gray.copy(alpha = 0.1f)
-                ) {
-                    Text(
-                        text = "Stock: ${product.stock}",
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (isLowStock) Color.Red else Color.White
-                    )
-                }
             }
         }
     }
@@ -627,13 +707,15 @@ fun AdminDashboard(
     onEditProductRequested: (Product) -> Unit, 
     onEditEventRequested: (Event) -> Unit, 
     onDeleteEvent: (Event) -> Unit, 
-    onSettingsAction: (String, String, List<String?>, List<String?>?) -> Unit
+    onSettingsAction: (String, String, List<String?>, List<String?>?) -> Unit,
+    isPinEnabled: Boolean,
+    onPinEnabledChange: (Boolean) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         when (currentAdminTab) {
             0 -> AdminProductList(products, isLoading, onRefresh, onEditProductRequested, { p -> products.remove(p); onUpdateSheet(p, "delete") })
             1 -> ShouldRebuyScreen(products)
-            2 -> DropdownSettingsManager(settings, onSettingsAction)
+            2 -> DropdownSettingsManager(settings, onSettingsAction, isPinEnabled, onPinEnabledChange)
             3 -> AdminEventsScreen(eventsList, isLoading, onRefresh, onEditEventRequested, onDeleteEvent)
         }
     }
@@ -646,30 +728,25 @@ fun AdminProductList(products: List<Product>, isLoading: Boolean, onRefresh: () 
     val filtered by remember { derivedStateOf { products.filter { it.name.contains(query, true) || it.brand.contains(query, true) || it.category.contains(query, true) }.sortedBy { it.name.lowercase() } } }
     
     Column(modifier = Modifier.fillMaxSize()) {
-        Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-            SearchBar(
-                inputField = {
-                    SearchBarDefaults.InputField(
-                        query = query,
-                        onQueryChange = { query = it },
-                        onSearch = { },
-                        expanded = false,
-                        onExpandedChange = { },
-                        placeholder = { Text("Search Inventory...") },
-                        leadingIcon = { Icon(Icons.Default.Inventory, null) },
-                        trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Default.Close, null) } },
-                    )
-                },
-                expanded = false,
-                onExpandedChange = { },
-                modifier = Modifier.fillMaxWidth().offset(y = (-12).dp)
-            ) { }
-        }
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            placeholder = { Text("Search Inventory...", style = MaterialTheme.typography.bodyMedium) },
+            leadingIcon = { Icon(Icons.Default.Inventory, null) },
+            trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Default.Close, null) } },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            singleLine = true,
+            shape = MaterialTheme.shapes.medium,
+            colors = OutlinedTextFieldDefaults.colors(
+                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                focusedContainerColor = MaterialTheme.colorScheme.surface
+            )
+        )
 
         PullToRefreshBox(
             isRefreshing = isLoading,
             onRefresh = onRefresh,
-            modifier = Modifier.fillMaxSize().offset(y = (-12).dp)
+            modifier = Modifier.fillMaxSize()
         ) {
             LazyColumn(
                 contentPadding = PaddingValues(16.dp),
@@ -742,64 +819,135 @@ fun AdminProductFormDialog(product: Product?, settings: DropdownSettings, onDism
 
     BasicAlertDialog(
         onDismissRequest = onDismiss,
-        modifier = Modifier.fillMaxWidth().padding(16.dp)
+        modifier = Modifier.fillMaxWidth(0.95f)
     ) {
         Surface(
             shape = MaterialTheme.shapes.extraLarge,
             tonalElevation = 6.dp,
             color = MaterialTheme.colorScheme.surface
         ) {
-            Column(modifier = Modifier.padding(24.dp)) {
+            Column(modifier = Modifier.padding(20.dp)) {
                 Text(
                     text = if (product == null) "Add Product" else "Edit Product",
-                    style = MaterialTheme.typography.headlineSmall,
+                    style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(bottom = 16.dp)
+                    modifier = Modifier.padding(bottom = 12.dp)
                 )
                 
                 LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.weight(1f, fill = false)
                 ) {
                     item {
-                        OutlinedTextField(name, { name = it }, label = { Text("Product Name") }, modifier = Modifier.fillMaxWidth())
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Box(modifier = Modifier.weight(1f)) { DropdownField("Brand", brand, sortedBrands.value) { brand = it } }
-                            Box(modifier = Modifier.weight(1f)) { DropdownField("Category", cat, sortedCategories.value) { cat = it } }
-                        }
+                        OutlinedTextField(
+                            value = name, 
+                            onValueChange = { name = it }, 
+                            label = { Text("Product Name", style = MaterialTheme.typography.bodySmall) }, 
+                            modifier = Modifier.fillMaxWidth(), 
+                            textStyle = MaterialTheme.typography.bodyMedium,
+                            trailingIcon = { if (name.isNotEmpty()) IconButton(onClick = { name = "" }) { Icon(Icons.Default.Close, null) } }
+                        )
+                        DropdownField("Brand", brand, sortedBrands.value) { brand = it }
+                        DropdownField("Category", cat, sortedCategories.value) { cat = it }
+                        
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Box(modifier = Modifier.weight(1f)) { DropdownField("Unit", unit, sortedUnits.value) { unit = it } }
-                            OutlinedTextField(size, { size = it }, label = { Text("Size") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+                            OutlinedTextField(
+                                value = size, 
+                                onValueChange = { size = it }, 
+                                label = { Text("Size", style = MaterialTheme.typography.bodySmall) }, 
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), 
+                                modifier = Modifier.weight(1f),
+                                textStyle = MaterialTheme.typography.bodyMedium,
+                                trailingIcon = { if (size.isNotEmpty()) IconButton(onClick = { size = "" }) { Icon(Icons.Default.Close, null) } }
+                            )
                         }
                         
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                         
-                        OutlinedTextField(cost, { cost = it; recalcPrice(newCost = it) }, label = { Text("Cost Price (₱)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth(), leadingIcon = { Icon(Icons.Default.Payments, null) })
-                        
-                        Text("Markup Type", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 8.dp))
-                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                            SegmentedButton(
-                                selected = mType == "Percentage",
-                                onClick = { mType = "Percentage"; recalcMarkup(sellPrice) },
-                                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
-                            ) { Text("Percentage (%)") }
-                            SegmentedButton(
-                                selected = mType == "Fixed",
-                                onClick = { mType = "Fixed"; recalcMarkup(sellPrice) },
-                                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
-                            ) { Text("Fixed (₱)") }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = cost, 
+                                onValueChange = { cost = it; recalcPrice(newCost = it) }, 
+                                label = { Text("Cost", style = MaterialTheme.typography.bodySmall) }, 
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), 
+                                modifier = Modifier.weight(1f),
+                                textStyle = MaterialTheme.typography.bodyMedium,
+                                trailingIcon = { if (cost.isNotEmpty()) IconButton(onClick = { cost = ""; recalcPrice(newCost = "") }) { Icon(Icons.Default.Close, null) } }
+                            )
+                            SingleChoiceSegmentedButtonRow(modifier = Modifier.weight(1f)) {
+                                SegmentedButton(
+                                    selected = mType == "Percentage",
+                                    onClick = { mType = "Percentage"; recalcMarkup(sellPrice) },
+                                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
+                                ) { Text("%", style = MaterialTheme.typography.labelSmall) }
+                                SegmentedButton(
+                                    selected = mType == "Fixed",
+                                    onClick = { mType = "Fixed"; recalcMarkup(sellPrice) },
+                                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+                                ) { Text("₱", style = MaterialTheme.typography.labelSmall) }
+                            }
                         }
-                        
-                        OutlinedTextField(mVal, { mVal = it; recalcPrice(newMarkup = it) }, label = { Text("Markup Value") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(sellPrice, { sellPrice = it; recalcMarkup(it) }, label = { Text("Final Selling Price (₱)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth(), leadingIcon = { Icon(Icons.Default.Sell, null) })
 
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedTextField(stock, { if (it.all { c -> c.isDigit() }) stock = it }, label = { Text("Stock") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
-                            OutlinedTextField(thresh, { if (it.all { c -> c.isDigit() }) thresh = it }, label = { Text("Threshold") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = mVal,
+                                onValueChange = { mVal = it; recalcPrice(newMarkup = it) },
+                                label = { Text("Markup", style = MaterialTheme.typography.bodySmall) },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.weight(1f),
+                                textStyle = MaterialTheme.typography.bodyMedium,
+                                trailingIcon = { if (mVal.isNotEmpty()) IconButton(onClick = { mVal = ""; recalcPrice(newMarkup = "") }) { Icon(Icons.Default.Close, null) } }
+                            )
+                            OutlinedTextField(
+                                value = sellPrice,
+                                onValueChange = { sellPrice = it; recalcMarkup(it) },
+                                label = { Text("Price", style = MaterialTheme.typography.bodySmall) },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.weight(1f),
+                                textStyle = MaterialTheme.typography.bodyMedium,
+                                trailingIcon = { if (sellPrice.isNotEmpty()) IconButton(onClick = { sellPrice = ""; recalcMarkup("") }) { Icon(Icons.Default.Close, null) } }
+                            )
                         }
-                        OutlinedTextField(ideal, { if (it.all { c -> c.isDigit() }) ideal = it }, label = { Text("Ideal Stock") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                        OutlinedTextField(
+                            value = stock, 
+                            onValueChange = { if (it.all { c -> c.isDigit() }) stock = it }, 
+                            label = { Text("Stock", style = MaterialTheme.typography.bodySmall) }, 
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), 
+                            modifier = Modifier.fillMaxWidth(),
+                            textStyle = MaterialTheme.typography.bodyMedium,
+                            trailingIcon = { if (stock.isNotEmpty()) IconButton(onClick = { stock = "" }) { Icon(Icons.Default.Close, null) } }
+                        )
+                        OutlinedTextField(
+                            value = thresh, 
+                            onValueChange = { if (it.all { c -> c.isDigit() }) thresh = it }, 
+                            label = { Text("Threshold", style = MaterialTheme.typography.bodySmall) }, 
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), 
+                            modifier = Modifier.fillMaxWidth(),
+                            textStyle = MaterialTheme.typography.bodyMedium,
+                            trailingIcon = { if (thresh.isNotEmpty()) IconButton(onClick = { thresh = "" }) { Icon(Icons.Default.Close, null) } }
+                        )
+                        OutlinedTextField(
+                            value = ideal, 
+                            onValueChange = { if (it.all { c -> c.isDigit() }) ideal = it }, 
+                            label = { Text("Ideal Stock", style = MaterialTheme.typography.bodySmall) }, 
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), 
+                            modifier = Modifier.fillMaxWidth(),
+                            textStyle = MaterialTheme.typography.bodyMedium,
+                            trailingIcon = { if (ideal.isNotEmpty()) IconButton(onClick = { ideal = "" }) { Icon(Icons.Default.Close, null) } }
+                        )
+
                         DropdownField("Store", store, sortedStores.value) { store = it }
                     }
                 }
@@ -840,7 +988,16 @@ fun DropdownField(label: String, value: String, options: List<String>, onValueCh
             value = value, 
             onValueChange = { onValueChange(it); expanded = true }, 
             label = { Text(label) }, 
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }, 
+            trailingIcon = { 
+                Row {
+                    if (value.isNotEmpty()) {
+                        IconButton(onClick = { onValueChange("") }) {
+                            Icon(Icons.Default.Close, null)
+                        }
+                    }
+                    ExposedDropdownMenuDefaults.TrailingIcon(expanded)
+                }
+            },
             modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable, true)
         )
         val filtered = options.filter { it.contains(value, true) }
@@ -924,7 +1081,7 @@ fun exportManifest(context: Context, list: List<Product>) {
         }.toString()
 
         // File 2: Detailed Rebuy Info
-        val fileName2 = "G&J_Sari-sari_Store_Rebuy_$timestamp.txt"
+        val fileName2 = "G&J_Sari-Sari_Store_Rebuy_$timestamp.txt"
         val text2 = StringBuilder("G&J SARI-SARI STORE REBUY DETAILS\n\n").apply {
             grouped.forEach { (category, products) ->
                 append("--- ${category.ifBlank { "UNCATEGORIZED" }.uppercase()} ---\n")
@@ -995,7 +1152,7 @@ fun AdminEventsScreen(events: List<Event>, isLoading: Boolean, onRefresh: () -> 
 }
 
 @Composable
-fun DropdownSettingsManager(settings: DropdownSettings, onAction: (String, String, List<String?>, List<String?>?) -> Unit) {
+fun DropdownSettingsManager(settings: DropdownSettings, onAction: (String, String, List<String?>, List<String?>?) -> Unit, isPinEnabled: Boolean, onPinEnabledChange: (Boolean) -> Unit) {
     var subTab by remember { mutableIntStateOf(0) }
     val sections = listOf("Brands", "Categories", "Units", "Stores", "Messenger", "Security")
     var input by remember { mutableStateOf("") }; var editIdx by remember { mutableIntStateOf(-1) }; var oldVal by remember { mutableStateOf("") }
@@ -1021,55 +1178,58 @@ fun DropdownSettingsManager(settings: DropdownSettings, onAction: (String, Strin
             }
         }
 
-        if (subTab == 5) {
-            SecuritySettings(onAction)
-        } else {
-            val list = when(subTab) { 
-                0 -> settings.brands; 1 -> settings.categories; 2 -> settings.units; 3 -> settings.stores; else -> settings.messengerKeys 
-            }
-            val sortedList by remember(subTab) { derivedStateOf { list.sortedBy { it.lowercase() } } }
-
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = input, 
-                        onValueChange = { input = it }, 
-                        label = { Text(if (editIdx == -1) "Add New" else "Update Entry") }, 
-                        modifier = Modifier.weight(1f),
-                        singleLine = true
-                    )
-                    Button(
-                        onClick = {
-                            if (input.isNotBlank()) {
-                                val newVal = input.trim(); val payload = MutableList(5) { "" }.apply { set(subTab, newVal) }
-                                val action = if (editIdx == -1) "add" else "update"
-                                val oldPayload = if (editIdx != -1) MutableList(5) { "" }.apply { set(subTab, oldVal) } else null
-                                if (editIdx == -1) { if (!list.contains(newVal)) list.add(newVal) } else { list[editIdx] = newVal; editIdx = -1 }
-                                onAction("Settings", action, payload, oldPayload); input = ""
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF7D1E))
-                    ) { 
-                        Text(if (editIdx == -1) "Add" else "Update") 
-                    }
+        Box(modifier = Modifier.weight(1f)) {
+            if (subTab == 5) {
+                SecuritySettings(onAction, isPinEnabled, onPinEnabledChange)
+            } else {
+                val list = when(subTab) { 
+                    0 -> settings.brands; 1 -> settings.categories; 2 -> settings.units; 3 -> settings.stores; else -> settings.messengerKeys 
                 }
-                
-                Spacer(modifier = Modifier.height(16.dp))
-                
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(sortedList) { s ->
-                        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                            Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text(s, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-                                IconButton(onClick = { editIdx = list.indexOf(s); input = s; oldVal = s }) { 
-                                    Icon(Icons.Default.Edit, null, tint = Color.LightGray) 
+                val sortedList by remember(subTab) { derivedStateOf { list.sortedBy { it.lowercase() } } }
+
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = input, 
+                            onValueChange = { input = it }, 
+                            label = { Text(if (editIdx == -1) "Add New" else "Update Entry") }, 
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            trailingIcon = { if (input.isNotEmpty()) IconButton(onClick = { input = "" }) { Icon(Icons.Default.Close, null) } }
+                        )
+                        Button(
+                            onClick = {
+                                if (input.isNotBlank()) {
+                                    val newVal = input.trim(); val payload = MutableList(5) { "" }.apply { set(subTab, newVal) }
+                                    val action = if (editIdx == -1) "add" else "update"
+                                    val oldPayload = if (editIdx != -1) MutableList(5) { "" }.apply { set(subTab, oldVal) } else null
+                                    if (editIdx == -1) { if (!list.contains(newVal)) list.add(newVal) } else { list[editIdx] = newVal; editIdx = -1 }
+                                    onAction("Settings", action, payload, oldPayload); input = ""
                                 }
-                                IconButton(onClick = { 
-                                    val p = MutableList(5) { "" }.apply { set(subTab, s) }
-                                    list.remove(s)
-                                    onAction("Settings", "delete", p, p) 
-                                }) { 
-                                    Icon(Icons.Default.Delete, null, tint = Color.Red) 
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF7D1E))
+                        ) { 
+                            Text(if (editIdx == -1) "Add" else "Update") 
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(sortedList) { s ->
+                            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                                Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(s, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                                    IconButton(onClick = { editIdx = list.indexOf(s); input = s; oldVal = s }) { 
+                                        Icon(Icons.Default.Edit, null, tint = Color.LightGray) 
+                                    }
+                                    IconButton(onClick = { 
+                                        val p = MutableList(5) { "" }.apply { set(subTab, s) }
+                                        list.remove(s)
+                                        onAction("Settings", "delete", p, p) 
+                                    }) { 
+                                        Icon(Icons.Default.Delete, null, tint = Color.Red) 
+                                    }
                                 }
                             }
                         }
@@ -1081,21 +1241,30 @@ fun DropdownSettingsManager(settings: DropdownSettings, onAction: (String, Strin
 }
 
 @Composable
-fun SecuritySettings(onAction: (String, String, List<String?>, List<String?>?) -> Unit) {
+fun SecuritySettings(onAction: (String, String, List<String?>, List<String?>?) -> Unit, isPinEnabled: Boolean, onPinEnabledChange: (Boolean) -> Unit) {
     val context = LocalContext.current
     var adminPw by remember { mutableStateOf(CacheManager.loadAdmin(context)) }
     var appPin by remember { mutableStateOf(CacheManager.loadPin(context)) }
     
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("Security Settings", style = MaterialTheme.typography.titleLarge, color = Color(0xFFFF7D1E))
         
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text("Enable App PIN Lock", modifier = Modifier.weight(1f))
+            Switch(checked = isPinEnabled, onCheckedChange = { 
+                onPinEnabledChange(it)
+                CacheManager.savePinEnabled(context, it)
+                onAction("Admin", "update", listOf(adminPw, appPin, it.toString()), null)
+            })
+        }
+
         OutlinedTextField(
             value = adminPw,
             onValueChange = { adminPw = it },
             label = { Text("Admin Login Password") },
             modifier = Modifier.fillMaxWidth(),
             trailingIcon = { IconButton(onClick = { 
-                onAction("Admin", "update", listOf(adminPw, appPin), null)
+                onAction("Admin", "update", listOf(adminPw, appPin, isPinEnabled.toString()), null)
                 CacheManager.saveAdmin(context, adminPw)
             }) { Icon(Icons.Default.Save, null) } }
         )
@@ -1108,7 +1277,7 @@ fun SecuritySettings(onAction: (String, String, List<String?>, List<String?>?) -
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
             trailingIcon = { IconButton(onClick = { 
                 if (appPin.length == 6) {
-                    onAction("Admin", "update", listOf(adminPw, appPin), null)
+                    onAction("Admin", "update", listOf(adminPw, appPin, isPinEnabled.toString()), null)
                     CacheManager.savePin(context, appPin)
                 } else {
                     Toast.makeText(context, "PIN must be 6 digits", Toast.LENGTH_SHORT).show()
@@ -1183,7 +1352,8 @@ fun EventEntryDialog(event: Event? = null, onDismiss: () -> Unit, onSave: (Event
                     onValueChange = { details = it }, 
                     label = { Text("Details / Description") }, 
                     modifier = Modifier.fillMaxWidth(),
-                    minLines = 2
+                    minLines = 2,
+                    trailingIcon = { if (details.isNotEmpty()) IconButton(onClick = { details = "" }) { Icon(Icons.Default.Close, null) } }
                 )
                 
                 OutlinedTextField(
@@ -1192,7 +1362,8 @@ fun EventEntryDialog(event: Event? = null, onDismiss: () -> Unit, onSave: (Event
                     label = { Text("Amount (₱)") }, 
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), 
                     modifier = Modifier.fillMaxWidth(),
-                    leadingIcon = { Icon(Icons.Default.AccountBalanceWallet, null) }
+                    leadingIcon = { Icon(Icons.Default.AccountBalanceWallet, null) },
+                    trailingIcon = { if (amount.isNotEmpty()) IconButton(onClick = { amount = "" }) { Icon(Icons.Default.Close, null) } }
                 )
                 
                 OutlinedTextField(
@@ -1200,7 +1371,8 @@ fun EventEntryDialog(event: Event? = null, onDismiss: () -> Unit, onSave: (Event
                     onValueChange = { person = it }, 
                     label = { Text(if (event == null) "Your Name (Created By)" else "Your Name (Edited By)") }, 
                     modifier = Modifier.fillMaxWidth(),
-                    leadingIcon = { Icon(Icons.Default.Person, null) }
+                    leadingIcon = { Icon(Icons.Default.Person, null) },
+                    trailingIcon = { if (person.isNotEmpty()) IconButton(onClick = { person = "" }) { Icon(Icons.Default.Close, null) } }
                 )
                 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -1239,6 +1411,8 @@ object CacheManager {
     fun loadAdmin(ctx: Context): String = try { val f = File(ctx.filesDir, "admin_cache.txt"); if (f.exists()) f.readText() else "" } catch (e: Exception) { "" }
     fun savePin(ctx: Context, pin: String) = File(ctx.filesDir, "pin_cache.txt").writeText(pin)
     fun loadPin(ctx: Context): String = try { val f = File(ctx.filesDir, "pin_cache.txt"); if (f.exists()) f.readText() else "041823" } catch (e: Exception) { "041823" }
+    fun savePinEnabled(ctx: Context, enabled: Boolean) = File(ctx.filesDir, "pin_enabled.txt").writeText(enabled.toString())
+    fun loadPinEnabled(ctx: Context): Boolean = try { val f = File(ctx.filesDir, "pin_enabled.txt"); if (f.exists()) f.readText().trim().toBoolean() else true } catch (e: Exception) { true }
     fun saveQueue(ctx: Context, q: List<PendingAction>) = File(ctx.filesDir, "queue_cache.json").writeText(Gson().toJson(q))
     fun loadQueue(ctx: Context): List<PendingAction> = try { val f = File(ctx.filesDir, "queue_cache.json"); if (f.exists()) Gson().fromJson(f.readText(), object : TypeToken<List<PendingAction>>() {}.type) else emptyList() } catch (e: Exception) { emptyList() }
 }
