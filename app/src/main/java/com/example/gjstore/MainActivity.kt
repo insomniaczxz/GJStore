@@ -187,16 +187,6 @@ fun MainAppScreen() {
                     CacheManager.savePin(context, it)
                     withContext(Dispatchers.Main) { appPin = it }
                 }
-                row?.getOrNull(2)?.let {
-                    val raw = it.trim().lowercase()
-                    val enabled = if (it.isBlank()) true else (raw == "true" || raw == "1" || raw == "yes")
-                    CacheManager.savePinEnabled(context, enabled)
-                    withContext(Dispatchers.Main) { 
-                        isPinEnabled = enabled 
-                        // Only lock if enabled
-                        if (!enabled) isAppLocked = false
-                    }
-                }
             }
         } catch (e: Exception) {}
     }
@@ -351,7 +341,7 @@ fun MainAppScreen() {
             Toast.makeText(context, if (editingEvent == null) "Event Added" else "Event Updated", Toast.LENGTH_SHORT).show()
             showEventDialog = false; editingEvent = null
         })
-        if (showEventHistoryDialog) EmployeeEventHistoryDialog(eventsList, isEventsLoading, { showEventHistoryDialog = false }, { showEventDialog = true }, { editingEvent = it; showEventDialog = true })
+        if (showEventHistoryDialog) EmployeeEventHistoryDialog(eventsList, isEventsLoading, { showEventHistoryDialog = false }, { showEventDialog = true })
         if (showFormDialog) AdminProductFormDialog(editingProduct, dynamicSettings, { showFormDialog = false }, { finalized ->
             val isUpdating = editingProduct != null && finalized.id == editingProduct?.id
             if (isUpdating) {
@@ -519,6 +509,12 @@ fun UserDashboard(
     var isBatchMode by remember { mutableStateOf(false) }
     val batchChanges = remember { mutableStateMapOf<String, String>() }
 
+    val displayProducts by remember {
+        derivedStateOf {
+            if (isBatchMode) filteredProducts else filteredProducts.filter { it.price > 0 }
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
@@ -581,7 +577,7 @@ fun UserDashboard(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(filteredProducts, key = { it.id }) { product ->
+                items(displayProducts, key = { it.id }) { product ->
                     ProductCard(product, isBatchMode, batchChanges, onProductUpdated)
                 }
             }
@@ -1079,7 +1075,7 @@ fun exportManifest(context: Context, list: List<Product>) {
                 append("--- ${category.ifBlank { "UNCATEGORIZED" }.uppercase()} ---\n")
                 products.sortedBy { it.name.lowercase() }.forEach {
                     val qtyToBuy = it.idealStock - it.stock
-                    append("- ${it.name} ${it.formattedSize}${it.unit}: ${if (qtyToBuy > 0) qtyToBuy else 0}\n")
+                    append("- ${it.name} ${it.formattedSize}${it.unit} --- ${if (qtyToBuy > 0) qtyToBuy else 0}x\n")
                 }
                 append("\n")
             }
@@ -1259,7 +1255,6 @@ fun SecuritySettings(onAction: (String, String, List<String?>, List<String?>?) -
             Switch(checked = isPinEnabled, onCheckedChange = { 
                 onPinEnabledChange(it)
                 CacheManager.savePinEnabled(context, it)
-                onAction("Admin", "update", listOf(adminPw, appPin, it.toString()), null)
             })
         }
 
@@ -1269,7 +1264,7 @@ fun SecuritySettings(onAction: (String, String, List<String?>, List<String?>?) -
             label = { Text("Admin Login Password") },
             modifier = Modifier.fillMaxWidth(),
             trailingIcon = { IconButton(onClick = { 
-                onAction("Admin", "update", listOf(adminPw, appPin, isPinEnabled.toString()), null)
+                onAction("Admin", "update", listOf(adminPw, appPin, "N/A"), null)
                 CacheManager.saveAdmin(context, adminPw)
             }) { Icon(Icons.Default.Save, null) } }
         )
@@ -1282,7 +1277,7 @@ fun SecuritySettings(onAction: (String, String, List<String?>, List<String?>?) -
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
             trailingIcon = { IconButton(onClick = { 
                 if (appPin.length == 6) {
-                    onAction("Admin", "update", listOf(adminPw, appPin, isPinEnabled.toString()), null)
+                    onAction("Admin", "update", listOf(adminPw, appPin, "N/A"), null)
                     CacheManager.savePin(context, appPin)
                 } else {
                     Toast.makeText(context, "PIN must be 6 digits", Toast.LENGTH_SHORT).show()
@@ -1329,8 +1324,8 @@ fun updateApp(context: Context, scope: CoroutineScope) {
 }
 
 @Composable
-fun EmployeeEventHistoryDialog(events: List<Event>, isLoading: Boolean, onDismiss: () -> Unit, onAddRequested: () -> Unit, onEditRequested: (Event) -> Unit) {
-    AlertDialog(onDismissRequest = onDismiss, title = { Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Text("Events"); IconButton(onClick = onAddRequested) { Icon(Icons.AutoMirrored.Filled.NoteAdd, null, tint = Color(0xFFFF7D1E)) } } }, text = { Column(modifier = Modifier.fillMaxHeight(0.7f)) { if (isLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth()); LazyColumn { items(events) { e -> Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) { Row(modifier = Modifier.padding(8.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { Column(modifier = Modifier.weight(1f)) { Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(e.dateCreated, style = MaterialTheme.typography.labelSmall); Text("₱${e.amount}", color = if (e.amount < 0) Color.Red else Color(0xFF00FF87)) }; Text(e.details, style = MaterialTheme.typography.bodySmall); Text("By: ${e.createdBy}${if (e.editedBy.isNotBlank()) " | Ed: ${e.editedBy}" else ""}", style = MaterialTheme.typography.labelSmall, color = Color.Gray) }; IconButton(onClick = { onEditRequested(e) }) { Icon(Icons.Default.Edit, null, tint = Color(0xFFFF7D1E)) } } } } } } }, confirmButton = { TextButton(onDismiss) { Text("Close") } })
+fun EmployeeEventHistoryDialog(events: List<Event>, isLoading: Boolean, onDismiss: () -> Unit, onAddRequested: () -> Unit) {
+    AlertDialog(onDismissRequest = onDismiss, title = { Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Text("Events"); IconButton(onClick = onAddRequested) { Icon(Icons.AutoMirrored.Filled.NoteAdd, null, tint = Color(0xFFFF7D1E)) } } }, text = { Column(modifier = Modifier.fillMaxHeight(0.7f)) { if (isLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth()); LazyColumn { items(events) { e -> Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) { Row(modifier = Modifier.padding(8.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { Column(modifier = Modifier.weight(1f)) { Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(e.dateCreated, style = MaterialTheme.typography.labelSmall); Text("₱${e.amount}", color = if (e.amount < 0) Color.Red else Color(0xFF00FF87)) }; Text(e.details, style = MaterialTheme.typography.bodySmall); Text("By: ${e.createdBy}${if (e.editedBy.isNotBlank()) " | Ed: ${e.editedBy}" else ""}", style = MaterialTheme.typography.labelSmall, color = Color.Gray) } } } } } } }, confirmButton = { TextButton(onDismiss) { Text("Close") } })
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
