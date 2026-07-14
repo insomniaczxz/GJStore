@@ -1297,7 +1297,7 @@ fun SecuritySettings(onAction: (String, String, List<String?>, List<String?>?) -
 fun updateApp(context: Context, scope: CoroutineScope) {
     scope.launch(Dispatchers.IO) {
         try {
-            val url = URL("https://raw.githubusercontent.com/insomniaczxz/GJStore/Improved-UI/release/app-debug.apk")
+            val url = URL("https://raw.githubusercontent.com/insomniaczxz/GJStore/main/release/app-debug.apk")
             val conn = url.openConnection() as HttpURLConnection
             conn.connectTimeout = 10000
             conn.readTimeout = 30000
