@@ -511,7 +511,8 @@ fun UserDashboard(
 
     val displayProducts by remember {
         derivedStateOf {
-            if (isBatchMode) filteredProducts else filteredProducts.filter { it.price > 0 }
+            val list = filteredProducts
+            if (isBatchMode) list else list.filter { it.price > 0 }
         }
     }
 
@@ -1373,7 +1374,9 @@ fun EventEntryDialog(event: Event? = null, onDismiss: () -> Unit, onSave: (Event
                 
                 OutlinedTextField(
                     value = person, 
-                    onValueChange = { person = it }, 
+                    onValueChange = { 
+                        person = it.replaceFirstChar { char -> if (char.isLowerCase()) char.titlecase(Locale.getDefault()) else char.toString() }
+                    },
                     label = { Text(if (event == null) "Your Name (Created By)" else "Your Name (Edited By)") }, 
                     modifier = Modifier.fillMaxWidth(),
                     leadingIcon = { Icon(Icons.Default.Person, null) },
