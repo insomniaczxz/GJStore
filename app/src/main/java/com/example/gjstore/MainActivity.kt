@@ -509,11 +509,8 @@ fun UserDashboard(
     var isBatchMode by remember { mutableStateOf(false) }
     val batchChanges = remember { mutableStateMapOf<String, String>() }
 
-    val displayProducts by remember {
-        derivedStateOf {
-            val list = filteredProducts
-            if (isBatchMode) list else list.filter { it.price > 0 }
-        }
+    val displayProducts = remember(filteredProducts, isBatchMode) {
+        if (isBatchMode) filteredProducts else filteredProducts.filter { it.price > 0 }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -727,7 +724,7 @@ fun AdminDashboard(
 @Composable
 fun AdminProductList(products: List<Product>, isLoading: Boolean, onRefresh: () -> Unit, onEdit: (Product) -> Unit, onDelete: (Product) -> Unit) {
     var query by remember { mutableStateOf("") }
-    val filtered by remember { derivedStateOf { products.filter { it.name.contains(query, true) || it.brand.contains(query, true) || it.category.contains(query, true) }.sortedBy { it.name.lowercase() } } }
+    val filtered by remember(products, query) { derivedStateOf { products.filter { it.name.contains(query, true) || it.brand.contains(query, true) || it.category.contains(query, true) }.sortedBy { it.name.lowercase() } } }
     
     Column(modifier = Modifier.fillMaxSize()) {
         OutlinedTextField(
