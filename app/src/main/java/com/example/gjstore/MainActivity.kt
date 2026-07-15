@@ -1,6 +1,8 @@
 package com.example.gjstore
 
 import android.os.Bundle
+import android.content.res.Configuration
+import androidx.compose.ui.platform.LocalConfiguration
 import android.widget.Toast
 import android.content.ContentValues
 import android.content.Context
@@ -461,78 +463,153 @@ fun MainAppScreen() {
 fun PinLockScreen(correctPin: String, onCorrectPin: () -> Unit) {
     var pinInput by remember { mutableStateOf("") }
     val pinToMatch = correctPin.ifBlank { "041823" }
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     Box(modifier = Modifier.fillMaxSize().background(Color(0xFF0F0F0F))) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Surface(
-                shape = androidx.compose.foundation.shape.CircleShape,
-                color = Color(0xFFFF7D1E).copy(alpha = 0.1f),
-                modifier = Modifier.size(100.dp)
+        if (isLandscape) {
+            Row(
+                modifier = Modifier.fillMaxSize().padding(24.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                Icon(
-                    imageVector = Icons.Default.Lock,
-                    contentDescription = null,
-                    modifier = Modifier.padding(24.dp).size(48.dp),
-                    tint = Color(0xFFFF7D1E)
-                )
-            }
-            
-            Spacer(modifier = Modifier.height(32.dp))
-            
-            Text(
-                text = "Welcome Back",
-                style = MaterialTheme.typography.headlineLarge,
-                color = Color.White,
-                fontWeight = FontWeight.ExtraBold
-            )
-            Text(
-                text = "Enter your PIN to continue",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color.Gray
-            )
-            
-            Spacer(modifier = Modifier.height(48.dp))
-            
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                repeat(6) { index ->
-                    val isFilled = index < pinInput.length
-                    Box(
-                        modifier = Modifier
-                            .size(16.dp)
-                            .background(
-                                color = if (isFilled) Color(0xFFFF7D1E) else Color.DarkGray,
-                                shape = androidx.compose.foundation.shape.CircleShape
-                            )
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Surface(
+                        shape = androidx.compose.foundation.shape.CircleShape,
+                        color = Color(0xFFFF7D1E).copy(alpha = 0.1f),
+                        modifier = Modifier.size(80.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            modifier = Modifier.padding(20.dp).size(40.dp),
+                            tint = Color(0xFFFF7D1E)
+                        )
+                    }
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Text(
+                        text = "Welcome Back",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = Color.White,
+                        fontWeight = FontWeight.ExtraBold
                     )
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        repeat(6) { index ->
+                            val isFilled = index < pinInput.length
+                            Box(
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .background(
+                                        color = if (isFilled) Color(0xFFFF7D1E) else Color.DarkGray,
+                                        shape = androidx.compose.foundation.shape.CircleShape
+                                    )
+                            )
+                        }
+                    }
+                }
+
+                // Number Pad
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val numbers = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "DEL")
+                    for (i in 0 until 4) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            for (j in 0 until 3) {
+                                val text = numbers[i * 3 + j]
+                                if (text.isNotEmpty()) {
+                                    PinButton(text, size = 64.dp) {
+                                        if (text == "DEL") {
+                                            if (pinInput.isNotEmpty()) pinInput = pinInput.dropLast(1)
+                                        } else if (pinInput.length < 6) {
+                                            pinInput += text
+                                            if (pinInput == pinToMatch) onCorrectPin()
+                                        }
+                                    }
+                                } else {
+                                    Spacer(modifier = Modifier.size(64.dp))
+                                }
+                            }
+                        }
+                    }
                 }
             }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Surface(
+                    shape = androidx.compose.foundation.shape.CircleShape,
+                    color = Color(0xFFFF7D1E).copy(alpha = 0.1f),
+                    modifier = Modifier.size(80.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = null,
+                        modifier = Modifier.padding(20.dp).size(40.dp),
+                        tint = Color(0xFFFF7D1E)
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                Text(
+                    text = "Welcome Back",
+                    style = MaterialTheme.typography.headlineLarge,
+                    color = Color.White,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                Text(
+                    text = "Enter your PIN to continue",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.Gray
+                )
+                
+                Spacer(modifier = Modifier.height(24.dp))
+                
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    repeat(6) { index ->
+                        val isFilled = index < pinInput.length
+                        Box(
+                            modifier = Modifier
+                                .size(12.dp)
+                                .background(
+                                    color = if (isFilled) Color(0xFFFF7D1E) else Color.DarkGray,
+                                    shape = androidx.compose.foundation.shape.CircleShape
+                                )
+                        )
+                    }
+                }
 
-            Spacer(modifier = Modifier.height(48.dp))
+                Spacer(modifier = Modifier.height(24.dp))
 
-            // Number Pad
-            val numbers = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "DEL")
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                for (i in 0 until 4) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                        for (j in 0 until 3) {
-                            val text = numbers[i * 3 + j]
-                            if (text.isNotEmpty()) {
-                                PinButton(text) {
-                                    if (text == "DEL") {
-                                        if (pinInput.isNotEmpty()) pinInput = pinInput.dropLast(1)
-                                    } else if (pinInput.length < 6) {
-                                        pinInput += text
-                                        if (pinInput == pinToMatch) onCorrectPin()
+                // Number Pad
+                val numbers = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "DEL")
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    for (i in 0 until 4) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            for (j in 0 until 3) {
+                                val text = numbers[i * 3 + j]
+                                if (text.isNotEmpty()) {
+                                    PinButton(text, size = 64.dp) {
+                                        if (text == "DEL") {
+                                            if (pinInput.isNotEmpty()) pinInput = pinInput.dropLast(1)
+                                        } else if (pinInput.length < 6) {
+                                            pinInput += text
+                                            if (pinInput == pinToMatch) onCorrectPin()
+                                        }
                                     }
+                                } else {
+                                    Spacer(modifier = Modifier.size(64.dp))
                                 }
-                            } else {
-                                Spacer(modifier = Modifier.size(72.dp))
                             }
                         }
                     }
@@ -543,12 +620,12 @@ fun PinLockScreen(correctPin: String, onCorrectPin: () -> Unit) {
 }
 
 @Composable
-fun PinButton(text: String, onClick: () -> Unit) {
+fun PinButton(text: String, size: androidx.compose.ui.unit.Dp = 72.dp, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
         shape = androidx.compose.foundation.shape.CircleShape,
         color = if (text == "DEL") Color.Transparent else Color(0xFF1E1E1E),
-        modifier = Modifier.size(72.dp)
+        modifier = Modifier.size(size)
     ) {
         Box(contentAlignment = Alignment.Center) {
             if (text == "DEL") {
@@ -556,7 +633,7 @@ fun PinButton(text: String, onClick: () -> Unit) {
             } else {
                 Text(
                     text = text,
-                    style = MaterialTheme.typography.headlineMedium,
+                    style = if (size < 72.dp) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
                     color = Color.White,
                     fontWeight = FontWeight.Medium
                 )
@@ -1140,22 +1217,34 @@ fun AdminProductFormDialog(product: Product?, settings: DropdownSettings, onDism
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Cancel") }
+                    TextButton(
+                        onClick = onDismiss, 
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 4.dp)
+                    ) { 
+                        Text("Cancel", maxLines = 1, softWrap = false, fontSize = 13.sp) 
+                    }
                     if (product != null) {
                         OutlinedButton(
                             onClick = { 
                                 onSave(Product(System.currentTimeMillis().toString(), name, brand, cat, unit, size.toDoubleOrNull() ?: 0.0, cost.toDoubleOrNull() ?: 0.0, store, mType, mVal.toDoubleOrNull() ?: 0.0, sellPrice.toDoubleOrNull() ?: 0.0, stock.toIntOrNull() ?: 0, thresh.toIntOrNull() ?: 0, SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()), ideal.toIntOrNull() ?: 0)) 
                             },
-                            modifier = Modifier.weight(1.5f)
-                        ) { Text("Save as New", textAlign = TextAlign.Center) }
+                            modifier = Modifier.weight(1.5f),
+                            contentPadding = PaddingValues(horizontal = 4.dp)
+                        ) { 
+                            Text("Save as New", textAlign = TextAlign.Center, maxLines = 1, softWrap = false, fontSize = 13.sp) 
+                        }
                     }
                     Button(
                         onClick = { 
                             onSave(Product(product?.id ?: System.currentTimeMillis().toString(), name, brand, cat, unit, size.toDoubleOrNull() ?: 0.0, cost.toDoubleOrNull() ?: 0.0, store, mType, mVal.toDoubleOrNull() ?: 0.0, sellPrice.toDoubleOrNull() ?: 0.0, stock.toIntOrNull() ?: 0, thresh.toIntOrNull() ?: 0, SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()), ideal.toIntOrNull() ?: 0)) 
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF7D1E)),
-                        modifier = Modifier.weight(1.5f)
-                    ) { Text("Save", textAlign = TextAlign.Center) }
+                        modifier = Modifier.weight(1.5f),
+                        contentPadding = PaddingValues(horizontal = 4.dp)
+                    ) { 
+                        Text("Save", textAlign = TextAlign.Center, maxLines = 1, softWrap = false, fontSize = 13.sp) 
+                    }
                 }
             }
         }
@@ -1671,6 +1760,25 @@ fun AdminProductCard(
                         },
                         modifier = Modifier.weight(1f),
                         textStyle = MaterialTheme.typography.bodySmall,
+                        trailingIcon = {
+                            IconButton(
+                                onClick = {
+                                    val newType = if (product.markupType == "Percentage") "Fixed" else "Percentage"
+                                    val c = product.cost
+                                    val v = product.markupValue
+                                    val newPrice = if (newType == "Percentage") c * (1 + v / 100) else c + v
+                                    onUpdate(product.copy(markupType = newType, price = kotlin.math.round(newPrice)))
+                                },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Text(
+                                    text = if (product.markupType == "Percentage") "%" else "₱",
+                                    fontSize = 12.sp,
+                                    color = Color(0xFFFF7D1E),
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                     )
                     OutlinedTextField(
