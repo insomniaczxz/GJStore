@@ -91,6 +91,7 @@ fun MainAppScreen() {
 
     val productsList = remember { mutableStateListOf<Product>() }
     val eventsList = remember { mutableStateListOf<Event>() }
+    val priceRecords = remember { mutableStateListOf<PriceRecord>() }
     val pendingQueue = remember { mutableStateListOf<PendingAction>() }
     var isLoading by remember { mutableStateOf(true) }
     var isEventsLoading by remember { mutableStateOf(false) }
@@ -130,6 +131,12 @@ fun MainAppScreen() {
                 eventsList.clear(); eventsList.addAll(newE)
                 withContext(Dispatchers.IO) { CacheManager.saveEvents(context, newE) }
             }
+            val phRes = RetrofitClient.apiService.readSheet("PriceHistory")
+            if (phRes.isSuccessful) {
+                val newPH = DataParser.parsePriceRecords(phRes.body())
+                priceRecords.clear(); priceRecords.addAll(newPH)
+                withContext(Dispatchers.IO) { CacheManager.savePriceRecords(context, newPH) }
+            }
         } catch (e: Exception) { 
             withContext(Dispatchers.Main) { Toast.makeText(context, "Refresh Failed", Toast.LENGTH_SHORT).show() }
         } finally { isLoading = false; isEventsLoading = false }
@@ -159,12 +166,13 @@ fun MainAppScreen() {
         withContext(Dispatchers.IO) {
             val cachedProducts = CacheManager.loadProducts(context)
             val cachedEvents = CacheManager.loadEvents(context)
+            val cachedPriceRecords = CacheManager.loadPriceRecords(context)
             val cachedSettings = CacheManager.loadSettings(context)
             val cachedQueue = CacheManager.loadQueue(context)
             val cachedPin = CacheManager.loadPin(context)
             val cachedPinEnabled = CacheManager.loadPinEnabled(context)
             withContext(Dispatchers.Main) {
-                productsList.addAll(cachedProducts); eventsList.addAll(cachedEvents); pendingQueue.addAll(cachedQueue)
+                productsList.addAll(cachedProducts); eventsList.addAll(cachedEvents); priceRecords.addAll(cachedPriceRecords); pendingQueue.addAll(cachedQueue)
                 appPin = cachedPin
                 isPinEnabled = cachedPinEnabled
                 cachedSettings?.let {
@@ -247,13 +255,13 @@ fun MainAppScreen() {
             },
             floatingActionButton = {
                 if (isAdminLoggedIn && (currentAdminTab == 0 || currentAdminTab == 3)) {
-                    ExtendedFloatingActionButton(
+                    FloatingActionButton(
                         onClick = { if (currentAdminTab == 0) { editingProduct = null; showFormDialog = true } else showEventDialog = true },
-                        icon = { Icon(Icons.Default.Add, null) },
-                        text = { Text(if (currentAdminTab == 0) "Product" else "Event") },
                         containerColor = Color(0xFFFF7D1E),
                         contentColor = Color.White
-                    )
+                    ) {
+                        Icon(Icons.Default.Add, null)
+                    }
                 }
             }
         ) { paddingValues ->
@@ -294,6 +302,7 @@ fun MainAppScreen() {
                             productsList, 
                             dynamicSettings, 
                             eventsList, 
+                            priceRecords,
                             isLoading, 
                             currentAdminTab, 
                             { coroutineScope.launch { refreshData() } },
@@ -344,6 +353,17 @@ fun MainAppScreen() {
         if (showEventHistoryDialog) EmployeeEventHistoryDialog(eventsList, isEventsLoading, { showEventHistoryDialog = false }, { showEventDialog = true })
         if (showFormDialog) AdminProductFormDialog(editingProduct, dynamicSettings, { showFormDialog = false }, { finalized ->
             val isUpdating = editingProduct != null && finalized.id == editingProduct?.id
+            
+            // Log to Price History if cost/store changed or new product
+            if (!isUpdating || (finalized.cost != editingProduct?.cost || finalized.lastBoughtStore != editingProduct?.lastBoughtStore)) {
+                if (finalized.cost > 0 && finalized.lastBoughtStore.isNotBlank()) {
+                    val ph = PriceRecord(finalized.id, finalized.name, finalized.lastBoughtStore, finalized.cost, SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date()))
+                    priceRecords.add(0, ph)
+                    val phAct = PendingAction("PriceHistory", "add", DataParser.priceRecordToRow(ph))
+                    pendingQueue.add(phAct); performAction(phAct)
+                }
+            }
+
             if (isUpdating) {
                 val idx = productsList.indexOfFirst { it.id == finalized.id }
                 if (idx != -1) productsList[idx] = finalized
@@ -699,6 +719,7 @@ fun AdminDashboard(
     products: MutableList<Product>, 
     settings: DropdownSettings, 
     eventsList: MutableList<Event>, 
+    priceRecords: List<PriceRecord>,
     isLoading: Boolean, 
     currentAdminTab: Int, 
     onRefresh: () -> Unit,
@@ -712,8 +733,8 @@ fun AdminDashboard(
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         when (currentAdminTab) {
-            0 -> AdminProductList(products, isLoading, onRefresh, onEditProductRequested, { p -> products.remove(p); onUpdateSheet(p, "delete") })
-            1 -> ShouldRebuyScreen(products)
+            0 -> AdminProductList(products, priceRecords, isLoading, onRefresh, onEditProductRequested, { p -> products.remove(p); onUpdateSheet(p, "delete") })
+            1 -> ShouldRebuyScreen(products, priceRecords)
             2 -> DropdownSettingsManager(settings, onSettingsAction, isPinEnabled, onPinEnabledChange)
             3 -> AdminEventsScreen(eventsList, isLoading, onRefresh, onEditEventRequested, onDeleteEvent)
         }
@@ -722,9 +743,10 @@ fun AdminDashboard(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AdminProductList(products: List<Product>, isLoading: Boolean, onRefresh: () -> Unit, onEdit: (Product) -> Unit, onDelete: (Product) -> Unit) {
+fun AdminProductList(products: List<Product>, priceRecords: List<PriceRecord>, isLoading: Boolean, onRefresh: () -> Unit, onEdit: (Product) -> Unit, onDelete: (Product) -> Unit) {
     var query by remember { mutableStateOf("") }
     val filtered by remember(products, query) { derivedStateOf { products.filter { it.name.contains(query, true) || it.brand.contains(query, true) || it.category.contains(query, true) }.sortedBy { it.name.lowercase() } } }
+    var showHistoryFor by remember { mutableStateOf<Product?>(null) }
     
     Column(modifier = Modifier.fillMaxSize()) {
         OutlinedTextField(
@@ -763,9 +785,18 @@ fun AdminProductList(products: List<Product>, isLoading: Boolean, onRefresh: () 
                                 if (p.lastBoughtStore.isNotBlank()) {
                                     Text("Store: ${p.lastBoughtStore}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
                                 }
+                                val records = priceRecords.filter { it.productId == p.id }
+                                if (records.isNotEmpty()) {
+                                    Text(
+                                        "View Price History (${records.size})",
+                                        color = Color(0xFFFF7D1E),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.clickable { showHistoryFor = p }.padding(top = 2.dp)
+                                    )
+                                }
                                 Text("Stock: ${p.stock}", color = if (p.stock <= p.threshold) Color.Red else Color.White, style = MaterialTheme.typography.labelSmall)
                             }
-                            Row { 
+                            Row(verticalAlignment = Alignment.CenterVertically) { 
                                 IconButton(onClick = { onEdit(p) }) { Icon(Icons.Default.Edit, null, tint = Color(0xFFFF7D1E)) }
                                 IconButton(onClick = { onDelete(p) }) { Icon(Icons.Default.Delete, null, tint = Color.Red) } 
                             }
@@ -774,6 +805,39 @@ fun AdminProductList(products: List<Product>, isLoading: Boolean, onRefresh: () 
                 }
             }
         }
+    }
+
+    if (showHistoryFor != null) {
+        val records = priceRecords.filter { it.productId == showHistoryFor!!.id }.sortedByDescending { it.date }
+        AlertDialog(
+            onDismissRequest = { showHistoryFor = null },
+            title = { Text("Price History: ${showHistoryFor!!.name}") },
+            text = {
+                Box(modifier = Modifier.heightIn(max = 400.dp)) {
+                    if (records.isEmpty()) {
+                        Text("No history recorded yet.")
+                    } else {
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(records) { r ->
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                                ) {
+                                    Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(r.date, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                            Text(r.store, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                                        }
+                                        Text("₱${r.cost}", style = MaterialTheme.typography.titleMedium, color = Color(0xFF00FF87), fontWeight = FontWeight.ExtraBold)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showHistoryFor = null }) { Text("Close") } }
+        )
     }
 }
 
@@ -1011,7 +1075,7 @@ fun DropdownField(label: String, value: String, options: List<String>, onValueCh
 }
 
 @Composable
-fun ShouldRebuyScreen(products: List<Product>) {
+fun ShouldRebuyScreen(products: List<Product>, priceRecords: List<PriceRecord>) {
     val list = products.filter { it.stock <= it.threshold }.sortedBy { it.name.lowercase() }
     val context = LocalContext.current
     
@@ -1036,9 +1100,27 @@ fun ShouldRebuyScreen(products: List<Product>) {
                     colors = CardDefaults.elevatedCardColors(containerColor = Color(0x11FF0000))
                 ) { 
                     Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { 
-                        Column { 
+                        Column(modifier = Modifier.weight(1f)) { 
                             Text(p.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                             Text("${p.brand} | Last: ${p.lastBoughtStore}", style = MaterialTheme.typography.bodySmall, color = Color.Gray) 
+                            
+                            // Recommendation logic
+                            val best = priceRecords.filter { it.productId == p.id }.minByOrNull { it.cost }
+                            if (best != null && (best.store != p.lastBoughtStore || best.cost < p.cost)) {
+                                Surface(
+                                    color = Color(0xFF00FF87).copy(alpha = 0.1f),
+                                    shape = MaterialTheme.shapes.small,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                ) {
+                                    Text(
+                                        "Recommended: ₱${best.cost} at ${best.store}",
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color(0xFF00FF87),
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
                         } 
                         Column(horizontalAlignment = Alignment.End) {
                             Text("${p.stock} / ${p.threshold}", color = Color.Red, fontWeight = FontWeight.Bold) 
@@ -1050,7 +1132,7 @@ fun ShouldRebuyScreen(products: List<Product>) {
         }
         
         Button(
-            onClick = { exportManifest(context, list) }, 
+            onClick = { exportManifest(context, list, priceRecords) }, 
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF7D1E))
         ) { 
@@ -1061,7 +1143,7 @@ fun ShouldRebuyScreen(products: List<Product>) {
     }
 }
 
-fun exportManifest(context: Context, list: List<Product>) {
+fun exportManifest(context: Context, list: List<Product>, priceRecords: List<PriceRecord>) {
     try {
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
         val grouped = list.groupBy { it.category }.toSortedMap(compareBy { it.lowercase() })
@@ -1084,9 +1166,15 @@ fun exportManifest(context: Context, list: List<Product>) {
         val text2 = StringBuilder("G&J SARI-SARI STORE REBUY DETAILS\n\n").apply {
             grouped.forEach { (category, products) ->
                 append("--- ${category.ifBlank { "UNCATEGORIZED" }.uppercase()} ---\n")
-                products.sortedBy { it.name.lowercase() }.forEach {
-                    append("- ${it.name}\n")
-                    append("  Last Cost: ₱${it.cost} | Store: ${it.lastBoughtStore}\n\n")
+                products.sortedBy { it.name.lowercase() }.forEach { p ->
+                    append("- ${p.name}\n")
+                    append("  Last Cost: ₱${p.cost} | Store: ${p.lastBoughtStore}\n")
+                    
+                    val best = priceRecords.filter { it.productId == p.id }.minByOrNull { it.cost }
+                    if (best != null && (best.store != p.lastBoughtStore || best.cost < p.cost)) {
+                        append("  RECOMMENDED: ₱${best.cost} at ${best.store}\n")
+                    }
+                    append("\n")
                 }
                 append("\n")
             }
@@ -1404,6 +1492,8 @@ object CacheManager {
     fun loadProducts(ctx: Context): List<Product> = try { val f = File(ctx.filesDir, "products_cache.json"); if (f.exists()) Gson().fromJson(f.readText(), object : TypeToken<List<Product>>() {}.type) else emptyList() } catch (e: Exception) { emptyList() }
     fun saveEvents(ctx: Context, list: List<Event>) = File(ctx.filesDir, "events_cache.json").writeText(Gson().toJson(list))
     fun loadEvents(ctx: Context): List<Event> = try { val f = File(ctx.filesDir, "events_cache.json"); if (f.exists()) Gson().fromJson(f.readText(), object : TypeToken<List<Event>>() {}.type) else emptyList() } catch (e: Exception) { emptyList() }
+    fun savePriceRecords(ctx: Context, list: List<PriceRecord>) = File(ctx.filesDir, "price_cache.json").writeText(Gson().toJson(list))
+    fun loadPriceRecords(ctx: Context): List<PriceRecord> = try { val f = File(ctx.filesDir, "price_cache.json"); if (f.exists()) Gson().fromJson(f.readText(), object : TypeToken<List<PriceRecord>>() {}.type) else emptyList() } catch (e: Exception) { emptyList() }
     fun saveSettings(ctx: Context, s: DropdownSettings) = File(ctx.filesDir, "settings_cache.json").writeText(Gson().toJson(mapOf("brands" to s.brands, "categories" to s.categories, "units" to s.units, "stores" to s.stores, "messenger" to s.messengerKeys)))
     fun loadSettings(ctx: Context): DropdownSettings? = try {
         val f = File(ctx.filesDir, "settings_cache.json")
@@ -1459,6 +1549,10 @@ object DataParser {
     fun parseEvents(body: List<List<String>>?): List<Event> = body?.drop(1)?.map { row ->
         Event(row.getOrElse(0){""}, row.getOrElse(1){""}, row.getOrNull(2)?.toDoubleOrNull() ?: 0.0, row.getOrElse(3){""}, row.getOrElse(4){""}, row.getOrElse(5){""})
     }?.reversed() ?: emptyList()
+    fun parsePriceRecords(body: List<List<String>>?): List<PriceRecord> = body?.drop(1)?.map { row ->
+        PriceRecord(row.getOrElse(0){""}, row.getOrElse(1){""}, row.getOrElse(2){""}, row.getOrNull(3)?.toDoubleOrNull() ?: 0.0, row.getOrElse(4){""})
+    } ?: emptyList()
     fun productToRow(p: Product) = listOf(p.id, p.name, p.brand, p.category, p.unit, p.size.toString(), p.cost.toString(), p.lastBoughtStore, p.markupType, p.markupValue.toString(), p.price.toString(), p.stock.toString(), p.threshold.toString(), p.date.ifBlank { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()) }, p.idealStock.toString())
     fun eventToRow(e: Event) = listOf(e.dateCreated, e.details, e.amount.toString(), e.createdBy, e.editedBy, e.editedDate)
+    fun priceRecordToRow(ph: PriceRecord) = listOf(ph.productId, ph.productName, ph.store, ph.cost.toString(), ph.date)
 }
