@@ -33,6 +33,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -47,7 +48,6 @@ tasks.matching { it.name == "assembleDebug" }.configureEach {
 }
 
 dependencies {
-    implementation(libs.androidx.appcompat)
     implementation(libs.androidx.core.ktx)
     implementation(libs.material)
     testImplementation(libs.junit)
@@ -62,7 +62,7 @@ dependencies {
     // Retrofit for Google Sheets API communication
     implementation(libs.retrofit)
     implementation(libs.retrofit.gson)
-    debugImplementation(libs.okhttp.logging)
+    implementation(libs.okhttp.logging)
 
     // Lifecycle coroutines
     implementation(libs.androidx.lifecycle.viewmodel.compose)

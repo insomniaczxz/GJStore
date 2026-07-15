@@ -92,6 +92,9 @@ fun MainAppScreen() {
     val productsList = remember { mutableStateListOf<Product>() }
     val eventsList = remember { mutableStateListOf<Event>() }
     val priceRecords = remember { mutableStateListOf<PriceRecord>() }
+    val priceRecordsMap by remember { 
+        derivedStateOf { priceRecords.groupBy { it.productId } }
+    }
     val pendingQueue = remember { mutableStateListOf<PendingAction>() }
     var isLoading by remember { mutableStateOf(true) }
     var isEventsLoading by remember { mutableStateOf(false) }
@@ -117,33 +120,51 @@ fun MainAppScreen() {
             val pRes = RetrofitClient.apiService.readSheet("Products")
             if (pRes.isSuccessful) {
                 val newP = DataParser.parseProducts(pRes.body())
-                productsList.clear(); productsList.addAll(newP)
+                withContext(Dispatchers.Main) {
+                    productsList.clear()
+                    productsList.addAll(newP)
+                }
                 withContext(Dispatchers.IO) { CacheManager.saveProducts(context, newP) }
             }
             val sRes = RetrofitClient.apiService.readSheet("Settings")
             if (sRes.isSuccessful) {
-                DataParser.parseSettings(sRes.body(), dynamicSettings)
+                withContext(Dispatchers.Main) {
+                    DataParser.parseSettings(sRes.body(), dynamicSettings)
+                }
                 withContext(Dispatchers.IO) { CacheManager.saveSettings(context, dynamicSettings) }
             }
             val eRes = RetrofitClient.apiService.readSheet("Events")
             if (eRes.isSuccessful) {
                 val newE = DataParser.parseEvents(eRes.body())
-                eventsList.clear(); eventsList.addAll(newE)
+                withContext(Dispatchers.Main) {
+                    eventsList.clear()
+                    eventsList.addAll(newE)
+                }
                 withContext(Dispatchers.IO) { CacheManager.saveEvents(context, newE) }
             }
             val phRes = RetrofitClient.apiService.readSheet("PriceHistory")
             if (phRes.isSuccessful) {
                 val newPH = DataParser.parsePriceRecords(phRes.body())
-                priceRecords.clear(); priceRecords.addAll(newPH)
+                withContext(Dispatchers.Main) {
+                    priceRecords.clear()
+                    priceRecords.addAll(newPH)
+                }
                 withContext(Dispatchers.IO) { CacheManager.savePriceRecords(context, newPH) }
             }
         } catch (e: Exception) { 
-            withContext(Dispatchers.Main) { Toast.makeText(context, "Refresh Failed", Toast.LENGTH_SHORT).show() }
-        } finally { isLoading = false; isEventsLoading = false }
+            withContext(Dispatchers.Main) { 
+                Toast.makeText(context, "Refresh Failed: ${e.message}", Toast.LENGTH_SHORT).show() 
+            }
+        } finally { 
+            withContext(Dispatchers.Main) {
+                isLoading = false
+                isEventsLoading = false 
+            }
+        }
     }
 
     fun performAction(action: PendingAction) {
-        coroutineScope.launch {
+        coroutineScope.launch(Dispatchers.IO) {
             try {
                 val body = mutableMapOf<String, Any>("sheetName" to action.sheetName, "action" to action.action, "data" to action.data)
                 if (action.oldData != null) body["oldData"] = action.oldData
@@ -151,41 +172,56 @@ fun MainAppScreen() {
                 if (response.isSuccessful || response.code() == 302) {
                     val respStr = response.body()?.string() ?: ""
                     if (respStr.contains("success")) {
-                        pendingQueue.remove(action)
+                        withContext(Dispatchers.Main) {
+                            pendingQueue.remove(action)
+                        }
                         CacheManager.saveQueue(context, pendingQueue.toList())
                     } else if (respStr.contains("error")) {
-                        withContext(Dispatchers.Main) { Toast.makeText(context, "Sync Error: Row not found", Toast.LENGTH_LONG).show() }
+                        withContext(Dispatchers.Main) { 
+                            Toast.makeText(context, "Sync Error for ${action.sheetName}", Toast.LENGTH_SHORT).show() 
+                        }
                     }
                 }
-            } catch (e: Exception) { /* Keep in queue */ }
+            } catch (e: Exception) { 
+                // Keep in queue for next retry
+            }
         }
     }
 
     LaunchedEffect(Unit) {
         isLoading = true; isEventsLoading = true
-        withContext(Dispatchers.IO) {
-            val cachedProducts = CacheManager.loadProducts(context)
-            val cachedEvents = CacheManager.loadEvents(context)
-            val cachedPriceRecords = CacheManager.loadPriceRecords(context)
-            val cachedSettings = CacheManager.loadSettings(context)
-            val cachedQueue = CacheManager.loadQueue(context)
-            val cachedPin = CacheManager.loadPin(context)
-            val cachedPinEnabled = CacheManager.loadPinEnabled(context)
-            withContext(Dispatchers.Main) {
-                productsList.addAll(cachedProducts); eventsList.addAll(cachedEvents); priceRecords.addAll(cachedPriceRecords); pendingQueue.addAll(cachedQueue)
-                appPin = cachedPin
-                isPinEnabled = cachedPinEnabled
-                cachedSettings?.let {
-                    dynamicSettings.brands.clear(); dynamicSettings.brands.addAll(it.brands)
-                    dynamicSettings.categories.clear(); dynamicSettings.categories.addAll(it.categories)
-                    dynamicSettings.units.clear(); dynamicSettings.units.addAll(it.units)
-                    dynamicSettings.stores.clear(); dynamicSettings.stores.addAll(it.stores)
-                    dynamicSettings.messengerKeys.clear(); dynamicSettings.messengerKeys.addAll(it.messengerKeys)
+        try {
+            withContext(Dispatchers.IO) {
+                val cachedProducts = CacheManager.loadProducts(context)
+                val cachedEvents = CacheManager.loadEvents(context)
+                val cachedPriceRecords = CacheManager.loadPriceRecords(context)
+                val cachedSettings = CacheManager.loadSettings(context)
+                val cachedQueue = CacheManager.loadQueue(context)
+                val cachedPin = CacheManager.loadPin(context)
+                val cachedPinEnabled = CacheManager.loadPinEnabled(context)
+                withContext(Dispatchers.Main) {
+                    productsList.addAll(cachedProducts); eventsList.addAll(cachedEvents); priceRecords.addAll(cachedPriceRecords); pendingQueue.addAll(cachedQueue)
+                    appPin = cachedPin
+                    isPinEnabled = cachedPinEnabled
+                    cachedSettings?.let {
+                        dynamicSettings.brands.clear(); dynamicSettings.brands.addAll(it.brands)
+                        dynamicSettings.categories.clear(); dynamicSettings.categories.addAll(it.categories)
+                        dynamicSettings.units.clear(); dynamicSettings.units.addAll(it.units)
+                        dynamicSettings.stores.clear(); dynamicSettings.stores.addAll(it.stores)
+                        dynamicSettings.messengerKeys.clear(); dynamicSettings.messengerKeys.addAll(it.messengerKeys)
+                    }
+                    // Process queue one by one to avoid overwhelming network/memory
+                    coroutineScope.launch(Dispatchers.IO) {
+                        pendingQueue.toList().forEach { performAction(it) }
+                    }
                 }
-                pendingQueue.toList().forEach { performAction(it) }
+            }
+            refreshData()
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "Startup error: ${e.message}", Toast.LENGTH_LONG).show()
             }
         }
-        refreshData()
         try {
             val aRes = RetrofitClient.apiService.readSheet("Admin")
             if (aRes.isSuccessful) {
@@ -303,6 +339,7 @@ fun MainAppScreen() {
                             dynamicSettings, 
                             eventsList, 
                             priceRecords,
+                            priceRecordsMap,
                             isLoading, 
                             currentAdminTab, 
                             { coroutineScope.launch { refreshData() } },
@@ -720,6 +757,7 @@ fun AdminDashboard(
     settings: DropdownSettings, 
     eventsList: MutableList<Event>, 
     priceRecords: List<PriceRecord>,
+    priceRecordsMap: Map<String, List<PriceRecord>>,
     isLoading: Boolean, 
     currentAdminTab: Int, 
     onRefresh: () -> Unit,
@@ -733,8 +771,8 @@ fun AdminDashboard(
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         when (currentAdminTab) {
-            0 -> AdminProductList(products, priceRecords, isLoading, onRefresh, onEditProductRequested, { p -> products.remove(p); onUpdateSheet(p, "delete") })
-            1 -> ShouldRebuyScreen(products, priceRecords)
+            0 -> AdminProductList(products, priceRecordsMap, isLoading, onRefresh, onEditProductRequested, { p -> products.remove(p); onUpdateSheet(p, "delete") })
+            1 -> ShouldRebuyScreen(products, priceRecordsMap)
             2 -> DropdownSettingsManager(settings, onSettingsAction, isPinEnabled, onPinEnabledChange)
             3 -> AdminEventsScreen(eventsList, isLoading, onRefresh, onEditEventRequested, onDeleteEvent)
         }
@@ -743,7 +781,7 @@ fun AdminDashboard(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AdminProductList(products: List<Product>, priceRecords: List<PriceRecord>, isLoading: Boolean, onRefresh: () -> Unit, onEdit: (Product) -> Unit, onDelete: (Product) -> Unit) {
+fun AdminProductList(products: List<Product>, priceRecordsMap: Map<String, List<PriceRecord>>, isLoading: Boolean, onRefresh: () -> Unit, onEdit: (Product) -> Unit, onDelete: (Product) -> Unit) {
     var query by remember { mutableStateOf("") }
     val filtered by remember(products, query) { derivedStateOf { products.filter { it.name.contains(query, true) || it.brand.contains(query, true) || it.category.contains(query, true) }.sortedBy { it.name.lowercase() } } }
     var showHistoryFor by remember { mutableStateOf<Product?>(null) }
@@ -785,7 +823,7 @@ fun AdminProductList(products: List<Product>, priceRecords: List<PriceRecord>, i
                                 if (p.lastBoughtStore.isNotBlank()) {
                                     Text("Store: ${p.lastBoughtStore}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
                                 }
-                                val records = priceRecords.filter { it.productId == p.id }
+                                val records = priceRecordsMap[p.id].orEmpty()
                                 if (records.isNotEmpty()) {
                                     Text(
                                         "View Price History (${records.size})",
@@ -808,7 +846,7 @@ fun AdminProductList(products: List<Product>, priceRecords: List<PriceRecord>, i
     }
 
     if (showHistoryFor != null) {
-        val records = priceRecords.filter { it.productId == showHistoryFor!!.id }.sortedByDescending { it.date }
+        val records = priceRecordsMap[showHistoryFor!!.id].orEmpty().sortedByDescending { it.date }
         AlertDialog(
             onDismissRequest = { showHistoryFor = null },
             title = { Text("Price History: ${showHistoryFor!!.name}") },
@@ -1075,7 +1113,7 @@ fun DropdownField(label: String, value: String, options: List<String>, onValueCh
 }
 
 @Composable
-fun ShouldRebuyScreen(products: List<Product>, priceRecords: List<PriceRecord>) {
+fun ShouldRebuyScreen(products: List<Product>, priceRecordsMap: Map<String, List<PriceRecord>>) {
     val list = products.filter { it.stock <= it.threshold }.sortedBy { it.name.lowercase() }
     val context = LocalContext.current
     
@@ -1105,7 +1143,7 @@ fun ShouldRebuyScreen(products: List<Product>, priceRecords: List<PriceRecord>) 
                             Text("${p.brand} | Last: ${p.lastBoughtStore}", style = MaterialTheme.typography.bodySmall, color = Color.Gray) 
                             
                             // Recommendation logic
-                            val best = priceRecords.filter { it.productId == p.id }.minByOrNull { it.cost }
+                            val best = priceRecordsMap[p.id].orEmpty().minByOrNull { it.cost }
                             if (best != null && (best.store != p.lastBoughtStore || best.cost < p.cost)) {
                                 Surface(
                                     color = Color(0xFF00FF87).copy(alpha = 0.1f),
@@ -1132,7 +1170,7 @@ fun ShouldRebuyScreen(products: List<Product>, priceRecords: List<PriceRecord>) 
         }
         
         Button(
-            onClick = { exportManifest(context, list, priceRecords) }, 
+            onClick = { exportManifest(context, list, priceRecordsMap) }, 
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF7D1E))
         ) { 
@@ -1143,7 +1181,7 @@ fun ShouldRebuyScreen(products: List<Product>, priceRecords: List<PriceRecord>) 
     }
 }
 
-fun exportManifest(context: Context, list: List<Product>, priceRecords: List<PriceRecord>) {
+fun exportManifest(context: Context, list: List<Product>, priceRecordsMap: Map<String, List<PriceRecord>>) {
     try {
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
         val grouped = list.groupBy { it.category }.toSortedMap(compareBy { it.lowercase() })
@@ -1170,7 +1208,7 @@ fun exportManifest(context: Context, list: List<Product>, priceRecords: List<Pri
                     append("- ${p.name}\n")
                     append("  Last Cost: ₱${p.cost} | Store: ${p.lastBoughtStore}\n")
                     
-                    val best = priceRecords.filter { it.productId == p.id }.minByOrNull { it.cost }
+                    val best = priceRecordsMap[p.id].orEmpty().minByOrNull { it.cost }
                     if (best != null && (best.store != p.lastBoughtStore || best.cost < p.cost)) {
                         append("  RECOMMENDED: ₱${best.cost} at ${best.store}\n")
                     }
