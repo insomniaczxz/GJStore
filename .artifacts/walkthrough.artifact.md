@@ -1,30 +1,36 @@
-# Walkthrough - Stability Fixes and App Optimization
+# Walkthrough - Feature Updates and Optimizations
 
-I have addressed the app crashes and optimized the application for better performance and smaller size.
+I have implemented the **Admin Batch Pricing** system and maintained all previous stability and performance improvements.
 
-## Changes
+## 1. Admin Batch Pricing (NEW)
+You can now update the prices of many items at once, which is perfect for updating categories like "Junk Foods" or brands like "Oishi".
 
-### 1. Stability and Crash Fixes
-- **Optimized Price History Lookup**: Previously, the app was performing heavy filtering on a large list of price records for every visible product. This created significant CPU and memory pressure which likely caused the crashes. I implemented a `priceRecordsMap` that uses a fast lookup table, making the UI much smoother and more stable.
-- **Improved Threading**: Ensured all UI state updates (like clearing and filling lists) happen strictly on the Main thread using `withContext(Dispatchers.Main)`, while heavy network and disk operations remain on background threads.
-- **Robust Error Handling**: Added comprehensive `try-catch` blocks around startup operations and data syncing to prevent unhandled exceptions from closing the app.
+- **Batch Mode**: Tap the new pencil icon next to the search bar to start editing.
+- **Bulk Apply**: Set a single **Cost** or **Markup** for all items currently visible in your search.
+- **Inline Editing**: Change the Cost, Markup, or Price directly on each product card.
+- **Smart Logic**:
+    - Changing Cost/Markup automatically updates the **Price**.
+    - Changing Price manually automatically updates the **Markup** percentage or fixed value.
+- **One-Tap Save**: Sync all your changes to the Google Sheet with one button.
 
-### 2. App Debloating and Optimization
-- **Stable Dependencies**: Downgraded `Retrofit` from an experimental version to the stable `2.11.0` standard to ensure reliability.
-- **Removed Unused Libraries**: Removed the `appcompat` dependency, which is not required for this modern Compose-based app, reducing the final APK size.
-- **Smart Logging**: Configured the network logger to only run during debugging. In the final version of the app, this logging is now disabled, which improves privacy and reduces overhead.
-- **Enabled Resource Shrinking**: Verified and enabled build features like `buildConfig` and R8 optimizations to ensure only necessary code and icons are included in your final app.
+## 2. Stability and Performance
+- **Search Stability**: Maintained the unique key system and background processing that fixed the "Junk Foods" and "Oishi" crashes.
+- **Memory Management**: Optimized the price history lookup table for better scrolling performance.
+- **Error Handling**: Enhanced safety nets for startup and network operations.
 
-### 3. UI and UX Improvements
-- **FAB Optimization**: Re-confirmed the smaller round `+` button in the Admin view so it no longer blocks the action icons of your inventory items.
-- **Standardized Icons**: Ensured all icons are correctly mapped to provide a consistent and professional look without unnecessary library overhead.
+## 3. App Optimization
+- **Size Reduction**: Removed unnecessary legacy libraries and enabled resource shrinking.
+- **Stable Standard**: Using proven, stable versions of libraries for maximum reliability.
 
 ## Verification Summary
 
 ### Automated Tests
 - **Build Success**: Successfully ran `:app:assembleDebug`.
-- **Optimization Check**: Verified that `BuildConfig` is correctly generated and used to control debug features.
 
-### Manual Verification
-1. **Startup Stability**: The app now loads cached data and then refreshes from the network sequentially, preventing "overload" crashes during the first minute of use.
-2. **Rebuy and History**: The optimized lookup ensures that even with hundreds of price records, the Rebuy and Admin screens remain responsive.
+### Manual Verification Steps (For User)
+1. **Open Admin**: Go to Admin Products and tap the pencil icon.
+2. **Filter & Edit**: Search for a category, use the top "Batch Edit" box to set a 20% markup, and tap the checkmark.
+3. **Manual Tweak**: Manually adjust one item's price and see its markup update.
+4. **Save All**: Click "Save All Changes" to update your inventory.
+
+```render_diffs(file:///C:/Users/Administrator/StudioProjects/GJStore/app/src/main/java/com/example/gjstore/MainActivity.kt)```

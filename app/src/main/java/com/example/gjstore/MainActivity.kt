@@ -16,6 +16,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -350,6 +351,18 @@ fun MainAppScreen() {
                                 coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
                                 Toast.makeText(context, "Product ${action.replaceFirstChar { it.uppercase() }}d", Toast.LENGTH_SHORT).show()
                             }, 
+                            { updatedList ->
+                                updatedList.forEach { updated ->
+                                    val idx = productsList.indexOfFirst { it.id == updated.id }
+                                    if (idx != -1) {
+                                        productsList[idx] = updated
+                                        val act = PendingAction("Products", "update", DataParser.productToRow(updated))
+                                        pendingQueue.add(act); performAction(act)
+                                    }
+                                }
+                                coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
+                                Toast.makeText(context, "Prices Updated", Toast.LENGTH_SHORT).show()
+                            },
                             { editingProduct = it; showFormDialog = true }, 
                             { editingEvent = it; showEventDialog = true }, 
                             { event ->
@@ -762,6 +775,7 @@ fun AdminDashboard(
     currentAdminTab: Int, 
     onRefresh: () -> Unit,
     onUpdateSheet: (Product, String) -> Unit, 
+    onBatchUpdate: (List<Product>) -> Unit,
     onEditProductRequested: (Product) -> Unit, 
     onEditEventRequested: (Event) -> Unit, 
     onDeleteEvent: (Event) -> Unit, 
@@ -771,7 +785,7 @@ fun AdminDashboard(
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         when (currentAdminTab) {
-            0 -> AdminProductList(products, priceRecordsMap, isLoading, onRefresh, onEditProductRequested, { p -> products.remove(p); onUpdateSheet(p, "delete") })
+            0 -> AdminProductList(products, priceRecordsMap, isLoading, onRefresh, onEditProductRequested, { p -> products.remove(p); onUpdateSheet(p, "delete") }, onBatchUpdate)
             1 -> ShouldRebuyScreen(products, priceRecordsMap)
             2 -> DropdownSettingsManager(settings, onSettingsAction, isPinEnabled, onPinEnabledChange)
             3 -> AdminEventsScreen(eventsList, isLoading, onRefresh, onEditEventRequested, onDeleteEvent)
@@ -781,26 +795,110 @@ fun AdminDashboard(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AdminProductList(products: List<Product>, priceRecordsMap: Map<String, List<PriceRecord>>, isLoading: Boolean, onRefresh: () -> Unit, onEdit: (Product) -> Unit, onDelete: (Product) -> Unit) {
+fun AdminProductList(
+    products: List<Product>, 
+    priceRecordsMap: Map<String, List<PriceRecord>>, 
+    isLoading: Boolean, 
+    onRefresh: () -> Unit, 
+    onEdit: (Product) -> Unit, 
+    onDelete: (Product) -> Unit,
+    onBatchUpdate: (List<Product>) -> Unit
+) {
     var query by remember { mutableStateOf("") }
-    val filtered by remember(products, query) { derivedStateOf { products.filter { it.name.contains(query, true) || it.brand.contains(query, true) || it.category.contains(query, true) }.sortedBy { it.name.lowercase() } } }
+    var filteredByQuery by remember { mutableStateOf<List<Product>>(emptyList()) }
+    
+    LaunchedEffect(products, query) {
+        if (query.isNotEmpty()) delay(300)
+        withContext(Dispatchers.Default) {
+            val result = try {
+                products.filter { 
+                    it.name.contains(query, true) || 
+                    it.brand.contains(query, true) || 
+                    it.category.contains(query, true) 
+                }.sortedBy { it.name.lowercase() }
+            } catch (e: Exception) {
+                products.toList()
+            }
+            withContext(Dispatchers.Main) {
+                filteredByQuery = result
+            }
+        }
+    }
+
+    var isBatchMode by remember { mutableStateOf(false) }
+    val batchChanges = remember { mutableStateMapOf<String, Product>() }
     var showHistoryFor by remember { mutableStateOf<Product?>(null) }
     
     Column(modifier = Modifier.fillMaxSize()) {
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            placeholder = { Text("Search Inventory...", style = MaterialTheme.typography.bodyMedium) },
-            leadingIcon = { Icon(Icons.Default.Inventory, null) },
-            trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Default.Close, null) } },
+        Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-            singleLine = true,
-            shape = MaterialTheme.shapes.medium,
-            colors = OutlinedTextFieldDefaults.colors(
-                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                focusedContainerColor = MaterialTheme.colorScheme.surface
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text("Search Inventory...", style = MaterialTheme.typography.bodyMedium) },
+                leadingIcon = { Icon(Icons.Default.Inventory, null) },
+                trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Default.Close, null) } },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                shape = MaterialTheme.shapes.medium,
+                colors = OutlinedTextFieldDefaults.colors(
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                    focusedContainerColor = MaterialTheme.colorScheme.surface
+                )
             )
-        )
+            IconButton(
+                onClick = { 
+                    isBatchMode = !isBatchMode
+                    if (!isBatchMode) batchChanges.clear()
+                },
+                modifier = Modifier.padding(start = 8.dp)
+            ) {
+                Icon(
+                    imageVector = if (isBatchMode) Icons.Default.Close else Icons.Default.Edit,
+                    contentDescription = null,
+                    tint = if (isBatchMode) Color(0xFFFF7D1E) else Color.White
+                )
+            }
+        }
+
+        if (isBatchMode) {
+            AdminBatchTools(
+                onApplyMarkup = { mVal, mType ->
+                    filteredByQuery.forEach { p ->
+                        val current = batchChanges[p.id] ?: p
+                        val c = current.cost
+                        val markup = mVal.toDoubleOrNull() ?: 0.0
+                        val newPrice = if (mType == "Percentage") c * (1 + markup / 100) else c + markup
+                        batchChanges[p.id] = current.copy(
+                            markupValue = markup,
+                            markupType = mType,
+                            price = kotlin.math.round(newPrice)
+                        )
+                    }
+                },
+                onApplyCost = { cost ->
+                    filteredByQuery.forEach { p ->
+                        val current = batchChanges[p.id] ?: p
+                        val c = cost.toDoubleOrNull() ?: 0.0
+                        val v = current.markupValue
+                        val type = current.markupType
+                        val newPrice = if (type == "Percentage") c * (1 + v / 100) else c + v
+                        batchChanges[p.id] = current.copy(
+                            cost = c,
+                            price = kotlin.math.round(newPrice)
+                        )
+                    }
+                },
+                onSave = {
+                    onBatchUpdate(batchChanges.values.toList())
+                    isBatchMode = false
+                    batchChanges.clear()
+                },
+                hasChanges = batchChanges.isNotEmpty()
+            )
+        }
 
         PullToRefreshBox(
             isRefreshing = isLoading,
@@ -811,35 +909,19 @@ fun AdminProductList(products: List<Product>, priceRecordsMap: Map<String, List<
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(filtered, key = { it.id }) { p ->
-                    ElevatedCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-                    ) {
-                        Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("${p.name} ${p.formattedSize}${p.unit}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                Text("₱${p.price} (Cost: ₱${p.cost})", color = Color(0xFF00FF87), style = MaterialTheme.typography.bodySmall)
-                                if (p.lastBoughtStore.isNotBlank()) {
-                                    Text("Store: ${p.lastBoughtStore}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-                                }
-                                val records = priceRecordsMap[p.id].orEmpty()
-                                if (records.isNotEmpty()) {
-                                    Text(
-                                        "View Price History (${records.size})",
-                                        color = Color(0xFFFF7D1E),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        modifier = Modifier.clickable { showHistoryFor = p }.padding(top = 2.dp)
-                                    )
-                                }
-                                Text("Stock: ${p.stock}", color = if (p.stock <= p.threshold) Color.Red else Color.White, style = MaterialTheme.typography.labelSmall)
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically) { 
-                                IconButton(onClick = { onEdit(p) }) { Icon(Icons.Default.Edit, null, tint = Color(0xFFFF7D1E)) }
-                                IconButton(onClick = { onDelete(p) }) { Icon(Icons.Default.Delete, null, tint = Color.Red) } 
-                            }
-                        }
-                    }
+                itemsIndexed(
+                    items = filteredByQuery,
+                    key = { index, item -> "${item.id}_${item.name}_$index" }
+                ) { _, p ->
+                    AdminProductCard(
+                        product = batchChanges[p.id] ?: p,
+                        isBatchMode = isBatchMode,
+                        onUpdate = { updated -> batchChanges[p.id] = updated },
+                        onEdit = { onEdit(p) },
+                        onDelete = { onDelete(p) },
+                        onViewHistory = { showHistoryFor = p },
+                        historyCount = priceRecordsMap[p.id].orEmpty().size
+                    )
                 }
             }
         }
@@ -1443,6 +1525,173 @@ fun updateApp(context: Context, scope: CoroutineScope) {
             }
         } catch (e: Exception) { 
             withContext(Dispatchers.Main) { Toast.makeText(context, "Update Failed: ${e.message}", Toast.LENGTH_SHORT).show() } 
+        }
+    }
+}
+
+@Composable
+fun AdminBatchTools(
+    onApplyMarkup: (String, String) -> Unit,
+    onApplyCost: (String) -> Unit,
+    onSave: () -> Unit,
+    hasChanges: Boolean
+) {
+    var batchMarkup by remember { mutableStateOf("") }
+    var batchMarkupType by remember { mutableStateOf("Percentage") }
+    var batchCost by remember { mutableStateOf("") }
+
+    Surface(
+        tonalElevation = 4.dp,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 8.dp),
+        shape = MaterialTheme.shapes.medium
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Batch Edit (All Visible Items)", style = MaterialTheme.typography.labelMedium, color = Color(0xFFFF7D1E))
+            
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = batchCost,
+                    onValueChange = { batchCost = it },
+                    label = { Text("Cost", fontSize = 10.sp) },
+                    modifier = Modifier.weight(1f),
+                    textStyle = MaterialTheme.typography.bodySmall,
+                    trailingIcon = {
+                        if (batchCost.isNotEmpty()) {
+                            IconButton(onClick = { onApplyCost(batchCost); batchCost = "" }) {
+                                Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+                
+                OutlinedTextField(
+                    value = batchMarkup,
+                    onValueChange = { batchMarkup = it },
+                    label = { Text("Markup", fontSize = 10.sp) },
+                    modifier = Modifier.weight(1.5f),
+                    textStyle = MaterialTheme.typography.bodySmall,
+                    prefix = {
+                        Text(if (batchMarkupType == "Percentage") "%" else "₱", color = Color.Gray, fontSize = 10.sp)
+                    },
+                    trailingIcon = {
+                        Row {
+                            IconButton(onClick = { batchMarkupType = if (batchMarkupType == "Percentage") "Fixed" else "Percentage" }) {
+                                Icon(Icons.Default.SwapHoriz, null, modifier = Modifier.size(16.dp))
+                            }
+                            if (batchMarkup.isNotEmpty()) {
+                                IconButton(onClick = { onApplyMarkup(batchMarkup, batchMarkupType); batchMarkup = "" }) {
+                                    Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+                    },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+            }
+            
+            Button(
+                onClick = onSave,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF7D1E)),
+                enabled = hasChanges
+            ) {
+                Text("Save All Changes")
+            }
+        }
+    }
+}
+
+@Composable
+fun AdminProductCard(
+    product: Product,
+    isBatchMode: Boolean,
+    onUpdate: (Product) -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onViewHistory: () -> Unit,
+    historyCount: Int
+) {
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        if (!isBatchMode) {
+            Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("${product.name} ${product.formattedSize}${product.unit}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("₱${product.price} (Cost: ₱${product.cost})", color = Color(0xFF00FF87), style = MaterialTheme.typography.bodySmall)
+                    if (product.lastBoughtStore.isNotBlank()) {
+                        Text("Store: ${product.lastBoughtStore}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                    }
+                    if (historyCount > 0) {
+                        Text(
+                            "View Price History ($historyCount)",
+                            color = Color(0xFFFF7D1E),
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.clickable { onViewHistory() }.padding(top = 2.dp)
+                        )
+                    }
+                    Text("Stock: ${product.stock}", color = if (product.stock <= product.threshold) Color.Red else Color.White, style = MaterialTheme.typography.labelSmall)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) { 
+                    IconButton(onClick = onEdit) { Icon(Icons.Default.Edit, null, tint = Color(0xFFFF7D1E)) }
+                    IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, null, tint = Color.Red) } 
+                }
+            }
+        } else {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(product.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = if (product.cost == 0.0) "" else product.cost.toString(),
+                        onValueChange = { 
+                            val c = it.toDoubleOrNull() ?: 0.0
+                            val v = product.markupValue
+                            val type = product.markupType
+                            val newPrice = if (type == "Percentage") c * (1 + v / 100) else c + v
+                            onUpdate(product.copy(cost = c, price = kotlin.math.round(newPrice)))
+                        },
+                        label = { Text("Cost", fontSize = 9.sp) },
+                        modifier = Modifier.weight(1f),
+                        textStyle = MaterialTheme.typography.bodySmall,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+                    OutlinedTextField(
+                        value = if (product.markupValue == 0.0) "" else product.markupValue.toString(),
+                        onValueChange = { 
+                            val v = it.toDoubleOrNull() ?: 0.0
+                            val c = product.cost
+                            val type = product.markupType
+                            val newPrice = if (type == "Percentage") c * (1 + v / 100) else c + v
+                            onUpdate(product.copy(markupValue = v, price = kotlin.math.round(newPrice)))
+                        },
+                        label = { 
+                            Text(if (product.markupType == "Percentage") "Mkp %" else "Mkp ₱", fontSize = 9.sp) 
+                        },
+                        modifier = Modifier.weight(1f),
+                        textStyle = MaterialTheme.typography.bodySmall,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+                    OutlinedTextField(
+                        value = if (product.price == 0.0) "" else product.price.toInt().toString(),
+                        onValueChange = { 
+                            val p = it.toDoubleOrNull() ?: 0.0
+                            val c = product.cost
+                            if (c > 0) {
+                                val res = if (product.markupType == "Percentage") ((p / c) - 1) * 100 else p - c
+                                onUpdate(product.copy(price = p, markupValue = res))
+                            } else {
+                                onUpdate(product.copy(price = p))
+                            }
+                        },
+                        label = { Text("Price", fontSize = 9.sp) },
+                        modifier = Modifier.weight(1f),
+                        textStyle = MaterialTheme.typography.bodySmall,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+                }
+            }
         }
     }
 }
