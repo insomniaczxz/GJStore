@@ -1,18 +1,19 @@
-# Walkthrough - Responsive PIN Lock Screen
+# Walkthrough - Date Formatting Fix
 
-I have successfully optimized the PIN lock screen to ensure it works perfectly on all devices, including tablets and phones with 16:9 screens (1080x1920).
+I have successfully standardized the date and time formatting throughout the app, specifically addressing the issue where raw numbers were appearing in Events and Price History.
 
 ## Changes
 
-### 1. Robust Portrait Layout
-- **Compact Design**: Reduced the size of icons, spacing, and buttons in portrait mode to ensure the entire number pad (including the "0" and "DEL" buttons) fits comfortably on standard phone screens.
-- **Scrolling Backup**: Wrapped the layout in a vertical scroll. If the screen is exceptionally small or has a wide aspect ratio, you can now swipe up or down to access any hidden buttons, ensuring you're never locked out of the app.
+### 1. Robust Date Parser
+- **New Formatting Logic**: Added a smart date parser in `DataParser` that can detect raw numeric timestamps (common when Google Sheets sends unformatted data) and convert them into readable AM/PM strings.
+- **Normalization**: The app now automatically recognizes multiple date formats (ISO, standard, etc.) and normalizes them all to a consistent `yyyy-MM-dd hh:mm a` format.
 
-### 2. Smart Landscape & Tablet Mode
-- **Adaptive Rearrangement**: When you rotate your phone to landscape or open the app on a tablet, the screen automatically splits into two columns.
-    - The **Welcome message** stays on the left.
-    - The **Number pad** moves to the right.
-- **Maximized Visibility**: This ensures the layout feels balanced and the buttons remain large and easy to tap on wider displays.
+### 2. Events & Price History
+- **Consistent Display**: Updated the data fetching logic for both **Events** and **Price History** to ensure every date is passed through the new formatting logic before being shown on the screen.
+- **Improved Logging**: Standardized the internal date creation when saving new events or price records, ensuring they are stored in the same readable format from the start.
+
+### 3. Product Synchronization
+- **Metadata Update**: Ensured the "Date Added/Updated" for products also follows the new standard, providing a unified look across all lists in the app.
 
 ## Verification Summary
 
@@ -20,8 +21,8 @@ I have successfully optimized the PIN lock screen to ensure it works perfectly o
 - **Build Success**: Successfully ran `:app:assembleDebug`.
 
 ### Manual Verification Steps (For User)
-1.  **Portrait Check**: Open the app in portrait mode on your phone. Verify the "0" button is now fully visible at the bottom.
-2.  **Rotation Check**: Rotate the phone to landscape. Verify the layout switches to a two-column view and everything remains visible.
-3.  **Scroll Check**: Try to "swipe up" on the PIN screen in portrait mode. It should remain stable if everything fits, or scroll if the screen is very small.
+1.  **Events Tab**: Open the Events list. Verify that all timestamps are now in a readable format (e.g., `2024-07-14 04:30 PM`) instead of raw numbers.
+2.  **Price History**: View the price history of an item. Verify the date column is clean and readable.
+3.  **New Entry**: Add a new Event or update a Product's price. Verify the new entry immediately shows the correctly formatted time.
 
 ```render_diffs(file:///C:/Users/Administrator/StudioProjects/GJStore/app/src/main/java/com/example/gjstore/MainActivity.kt)```

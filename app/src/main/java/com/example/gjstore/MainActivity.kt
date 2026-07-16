@@ -93,6 +93,7 @@ fun MainAppScreen() {
     var showFormDialog by remember { mutableStateOf(false) }
 
     val productsList = remember { mutableStateListOf<Product>() }
+    var productsVersion by remember { mutableIntStateOf(0) }
     val eventsList = remember { mutableStateListOf<Event>() }
     val priceRecords = remember { mutableStateListOf<PriceRecord>() }
     val priceRecordsMap by remember { 
@@ -107,13 +108,24 @@ fun MainAppScreen() {
     var isPinEnabled by remember { mutableStateOf(CacheManager.loadPinEnabled(context)) }
     var isAppLocked by remember { mutableStateOf(isPinEnabled) }
 
-    val filteredProducts by remember {
-        derivedStateOf {
-            productsList.filter {
-                it.name.contains(searchQuery, ignoreCase = true) ||
-                it.brand.contains(searchQuery, ignoreCase = true) ||
-                it.category.contains(searchQuery, ignoreCase = true)
-            }.sortedBy { it.name.lowercase() }
+    var filteredProducts by remember { mutableStateOf<List<Product>>(emptyList()) }
+
+    LaunchedEffect(searchQuery, productsList.size, productsVersion) {
+        // Debounce search to prevent UI lag while typing
+        if (searchQuery.isNotEmpty()) delay(300)
+        withContext(Dispatchers.Default) {
+            val result = try {
+                productsList.filter {
+                    it.name.contains(searchQuery, ignoreCase = true) ||
+                    it.brand.contains(searchQuery, ignoreCase = true) ||
+                    it.category.contains(searchQuery, ignoreCase = true)
+                }.sortedBy { it.name.lowercase() }
+            } catch (e: Exception) {
+                productsList.toList()
+            }
+            withContext(Dispatchers.Main) {
+                filteredProducts = result
+            }
         }
     }
 
@@ -126,6 +138,7 @@ fun MainAppScreen() {
                 withContext(Dispatchers.Main) {
                     productsList.clear()
                     productsList.addAll(newP)
+                    productsVersion++
                 }
                 withContext(Dispatchers.IO) { CacheManager.saveProducts(context, newP) }
             }
@@ -317,6 +330,7 @@ fun MainAppScreen() {
                                 val idx = productsList.indexOfFirst { it.id == updated.id }
                                 if (idx != -1) {
                                     productsList[idx] = updated
+                                    productsVersion++
                                     val act = PendingAction("Products", "update", DataParser.productToRow(updated))
                                     pendingQueue.add(act); performAction(act)
                                     coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
@@ -332,6 +346,7 @@ fun MainAppScreen() {
                                         pendingQueue.add(act); performAction(act)
                                     }
                                 }
+                                productsVersion++
                                 coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
                                 Toast.makeText(context, "Stocks Updated", Toast.LENGTH_SHORT).show()
                             }
@@ -339,6 +354,7 @@ fun MainAppScreen() {
                     } else {
                         AdminDashboard(
                             productsList, 
+                            productsVersion,
                             dynamicSettings, 
                             eventsList, 
                             priceRecords,
@@ -350,6 +366,7 @@ fun MainAppScreen() {
                                 val data = DataParser.productToRow(target)
                                 val act = PendingAction("Products", action, data)
                                 pendingQueue.add(act); performAction(act)
+                                productsVersion++
                                 coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
                                 Toast.makeText(context, "Product ${action.replaceFirstChar { it.uppercase() }}d", Toast.LENGTH_SHORT).show()
                             }, 
@@ -362,6 +379,7 @@ fun MainAppScreen() {
                                         pendingQueue.add(act); performAction(act)
                                     }
                                 }
+                                productsVersion++
                                 coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
                                 Toast.makeText(context, "Prices Updated", Toast.LENGTH_SHORT).show()
                             },
@@ -409,7 +427,7 @@ fun MainAppScreen() {
             // Log to Price History if cost/store changed or new product
             if (!isUpdating || (finalized.cost != editingProduct?.cost || finalized.lastBoughtStore != editingProduct?.lastBoughtStore)) {
                 if (finalized.cost > 0 && finalized.lastBoughtStore.isNotBlank()) {
-                    val ph = PriceRecord(finalized.id, finalized.name, finalized.lastBoughtStore, finalized.cost, SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date()))
+                    val ph = PriceRecord(finalized.id, finalized.name, finalized.lastBoughtStore, finalized.cost, SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date()))
                     priceRecords.add(0, ph)
                     val phAct = PendingAction("PriceHistory", "add", DataParser.priceRecordToRow(ph))
                     pendingQueue.add(phAct); performAction(phAct)
@@ -422,6 +440,7 @@ fun MainAppScreen() {
             } else {
                 productsList.add(finalized)
             }
+            productsVersion++
             val action = if (isUpdating) "update" else "add"
             val act = PendingAction("Products", action, DataParser.productToRow(finalized))
             pendingQueue.add(act); performAction(act)
@@ -844,6 +863,7 @@ fun AdminLoginDialog(onDismiss: () -> Unit, onLoginSuccess: () -> Unit) {
 @Composable
 fun AdminDashboard(
     products: MutableList<Product>, 
+    productsVersion: Int,
     settings: DropdownSettings, 
     eventsList: MutableList<Event>, 
     priceRecords: List<PriceRecord>,
@@ -862,7 +882,7 @@ fun AdminDashboard(
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         when (currentAdminTab) {
-            0 -> AdminProductList(products, priceRecordsMap, isLoading, onRefresh, onEditProductRequested, { p -> products.remove(p); onUpdateSheet(p, "delete") }, onBatchUpdate)
+            0 -> AdminProductList(products, productsVersion, priceRecordsMap, isLoading, onRefresh, onEditProductRequested, { p -> products.remove(p); onUpdateSheet(p, "delete") }, onBatchUpdate)
             1 -> ShouldRebuyScreen(products, priceRecordsMap)
             2 -> DropdownSettingsManager(settings, onSettingsAction, isPinEnabled, onPinEnabledChange)
             3 -> AdminEventsScreen(eventsList, isLoading, onRefresh, onEditEventRequested, onDeleteEvent)
@@ -874,6 +894,7 @@ fun AdminDashboard(
 @Composable
 fun AdminProductList(
     products: List<Product>, 
+    productsVersion: Int,
     priceRecordsMap: Map<String, List<PriceRecord>>, 
     isLoading: Boolean, 
     onRefresh: () -> Unit, 
@@ -884,7 +905,11 @@ fun AdminProductList(
     var query by remember { mutableStateOf("") }
     var filteredByQuery by remember { mutableStateOf<List<Product>>(emptyList()) }
     
-    LaunchedEffect(products, query) {
+    var isBatchMode by remember { mutableStateOf(false) }
+    val batchChanges = remember { mutableStateMapOf<String, Product>() }
+    var showHistoryFor by remember { mutableStateOf<Product?>(null) }
+    
+    LaunchedEffect(products.size, query, productsVersion) {
         if (query.isNotEmpty()) delay(300)
         withContext(Dispatchers.Default) {
             val result = try {
@@ -901,10 +926,6 @@ fun AdminProductList(
             }
         }
     }
-
-    var isBatchMode by remember { mutableStateOf(false) }
-    val batchChanges = remember { mutableStateMapOf<String, Product>() }
-    var showHistoryFor by remember { mutableStateOf<Product?>(null) }
     
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -1908,6 +1929,30 @@ object CacheManager {
 }
 
 object DataParser {
+    private fun formatSheetDate(input: String): String {
+        if (input.isBlank()) return ""
+        val asLong = input.replace(",", "").toLongOrNull()
+        if (asLong != null && asLong > 1000000000L) {
+            return try {
+                SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date(asLong))
+            } catch (e: Exception) { input }
+        }
+        if (input.contains("AM", ignoreCase = true) || input.contains("PM", ignoreCase = true)) return input
+        return try {
+            val formats = listOf("yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm", "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
+            var date: Date? = null
+            for (f in formats) {
+                try { 
+                    val sdf = SimpleDateFormat(f, Locale.getDefault())
+                    if (f.endsWith("'Z'")) sdf.timeZone = TimeZone.getTimeZone("UTC")
+                    date = sdf.parse(input)
+                    if (date != null) break 
+                } catch (e: Exception) {}
+            }
+            if (date != null) SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(date) else input
+        } catch (e: Exception) { input }
+    }
+
     fun parseProducts(body: List<List<String>>?): List<Product> {
         val list = mutableListOf<Product>()
         body?.drop(1)?.forEach { row ->
@@ -1925,7 +1970,7 @@ object DataParser {
                 row.getOrNull(10)?.toDoubleOrNull() ?: 0.0,
                 row.getOrNull(11)?.toIntOrNull() ?: 0, 
                 row.getOrNull(12)?.toIntOrNull() ?: 0, 
-                row.getOrElse(13) { "" },
+                formatSheetDate(row.getOrElse(13) { "" }),
                 row.getOrNull(14)?.toIntOrNull() ?: 0
             ))
         }
@@ -1942,12 +1987,12 @@ object DataParser {
         }
     }
     fun parseEvents(body: List<List<String>>?): List<Event> = body?.drop(1)?.map { row ->
-        Event(row.getOrElse(0){""}, row.getOrElse(1){""}, row.getOrNull(2)?.toDoubleOrNull() ?: 0.0, row.getOrElse(3){""}, row.getOrElse(4){""}, row.getOrElse(5){""})
+        Event(formatSheetDate(row.getOrElse(0){""}), row.getOrElse(1){""}, row.getOrNull(2)?.toDoubleOrNull() ?: 0.0, row.getOrElse(3){""}, row.getOrElse(4){""}, row.getOrElse(5){""})
     }?.reversed() ?: emptyList()
     fun parsePriceRecords(body: List<List<String>>?): List<PriceRecord> = body?.drop(1)?.map { row ->
-        PriceRecord(row.getOrElse(0){""}, row.getOrElse(1){""}, row.getOrElse(2){""}, row.getOrNull(3)?.toDoubleOrNull() ?: 0.0, row.getOrElse(4){""})
+        PriceRecord(row.getOrElse(0){""}, row.getOrElse(1){""}, row.getOrElse(2){""}, row.getOrNull(3)?.toDoubleOrNull() ?: 0.0, formatSheetDate(row.getOrElse(4){""}))
     } ?: emptyList()
-    fun productToRow(p: Product) = listOf(p.id, p.name, p.brand, p.category, p.unit, p.size.toString(), p.cost.toString(), p.lastBoughtStore, p.markupType, p.markupValue.toString(), p.price.toString(), p.stock.toString(), p.threshold.toString(), p.date.ifBlank { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()) }, p.idealStock.toString())
+    fun productToRow(p: Product) = listOf(p.id, p.name, p.brand, p.category, p.unit, p.size.toString(), p.cost.toString(), p.lastBoughtStore, p.markupType, p.markupValue.toString(), p.price.toString(), p.stock.toString(), p.threshold.toString(), p.date.ifBlank { SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date()) }, p.idealStock.toString())
     fun eventToRow(e: Event) = listOf(e.dateCreated, e.details, e.amount.toString(), e.createdBy, e.editedBy, e.editedDate)
     fun priceRecordToRow(ph: PriceRecord) = listOf(ph.productId, ph.productName, ph.store, ph.cost.toString(), ph.date)
 }
