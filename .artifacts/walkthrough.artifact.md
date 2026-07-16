@@ -1,19 +1,24 @@
-# Walkthrough - Date Formatting Fix
+# Walkthrough - Fixed Markup Suggestions
 
-I have successfully standardized the date and time formatting throughout the app, specifically addressing the issue where raw numbers were appearing in Events and Price History.
+I have successfully implemented an automated suggestion system for the "Fixed" markup type. This ensures that you get consistent pricing across all your products with minimal typing.
 
 ## Changes
 
-### 1. Robust Date Parser
-- **New Formatting Logic**: Added a smart date parser in `DataParser` that can detect raw numeric timestamps (common when Google Sheets sends unformatted data) and convert them into readable AM/PM strings.
-- **Normalization**: The app now automatically recognizes multiple date formats (ISO, standard, etc.) and normalizes them all to a consistent `yyyy-MM-dd hh:mm a` format.
+### 1. Automated Pricing Formula
+- **Smart Logic**: I've added a formula that perfectly matches your provided cost brackets: `Markup = floor((Cost - 1) / 5) + 3`.
+- **Comprehensive Coverage**: This logic automatically handles every price point from ₱1 all the way up to ₱250 and beyond.
+    - *Example 1*: Cost ₱5 -> Suggests +₱3
+    - *Example 2*: Cost ₱10 -> Suggests +₱4
+    - *Example 3*: Cost ₱250 -> Suggests +₱52
 
-### 2. Events & Price History
-- **Consistent Display**: Updated the data fetching logic for both **Events** and **Price History** to ensure every date is passed through the new formatting logic before being shown on the screen.
-- **Improved Logging**: Standardized the internal date creation when saving new events or price records, ensuring they are stored in the same readable format from the start.
+### 2. Context-Aware Triggers
+- **Type Restricted**: The automatic suggestion only activates when you have the **Fixed (₱)** markup type selected.
+- **Stay in Control**: If you use the **Percentage (%)** mode, the app remains fully manual as requested, so your custom percentages aren't overridden.
+- **Instant Updates**: The suggestion triggers instantly whenever you type a new cost OR whenever you switch from % to ₱.
 
-### 3. Product Synchronization
-- **Metadata Update**: Ensured the "Date Added/Updated" for products also follows the new standard, providing a unified look across all lists in the app.
+### 3. User Flexibility
+- **Manual Overrides**: You can still manually change the markup value at any time. The app will prioritize your manual input until the cost is changed again.
+- **Real-Time Sync**: The final price recalculates immediately to reflect either the suggested or your manual markup.
 
 ## Verification Summary
 
@@ -21,8 +26,10 @@ I have successfully standardized the date and time formatting throughout the app
 - **Build Success**: Successfully ran `:app:assembleDebug`.
 
 ### Manual Verification Steps (For User)
-1.  **Events Tab**: Open the Events list. Verify that all timestamps are now in a readable format (e.g., `2024-07-14 04:30 PM`) instead of raw numbers.
-2.  **Price History**: View the price history of an item. Verify the date column is clean and readable.
-3.  **New Entry**: Add a new Event or update a Product's price. Verify the new entry immediately shows the correctly formatted time.
+1.  Open the **Add Product** dialog.
+2.  Switch to the **₱ (Fixed)** markup mode.
+3.  Type `10` in the Cost field. Verify the markup becomes `4`.
+4.  Type `250` in the Cost field. Verify the markup becomes `52`.
+5.  Switch to **% (Percentage)** mode. Verify that typing a cost no longer changes the markup value automatically.
 
 ```render_diffs(file:///C:/Users/Administrator/StudioProjects/GJStore/app/src/main/java/com/example/gjstore/MainActivity.kt)```

@@ -1098,6 +1098,17 @@ fun AdminProductFormDialog(product: Product?, settings: DropdownSettings, onDism
         }
     }
 
+    fun applyFixedSuggestion(newCost: String? = null, newType: String? = null) {
+        val type = newType ?: mType
+        if (type != "Fixed") return
+        val c = (newCost ?: cost).toDoubleOrNull() ?: 0.0
+        if (c >= 1.0) {
+            val suggested = kotlin.math.floor((c - 1) / 5).toInt() + 3
+            mVal = suggested.toString()
+            recalcPrice(newCost = newCost, newMarkup = mVal, newType = type)
+        }
+    }
+
     BasicAlertDialog(
         onDismissRequest = onDismiss,
         modifier = Modifier.fillMaxWidth(0.95f)
@@ -1153,7 +1164,11 @@ fun AdminProductFormDialog(product: Product?, settings: DropdownSettings, onDism
                         ) {
                             OutlinedTextField(
                                 value = cost, 
-                                onValueChange = { cost = it; recalcPrice(newCost = it) }, 
+                                onValueChange = { 
+                                    cost = it
+                                    applyFixedSuggestion(newCost = it)
+                                    recalcPrice(newCost = it) 
+                                }, 
                                 label = { Text("Cost", style = MaterialTheme.typography.bodySmall) }, 
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), 
                                 modifier = Modifier.weight(1f),
@@ -1168,7 +1183,11 @@ fun AdminProductFormDialog(product: Product?, settings: DropdownSettings, onDism
                                 ) { Text("%", style = MaterialTheme.typography.labelSmall) }
                                 SegmentedButton(
                                     selected = mType == "Fixed",
-                                    onClick = { mType = "Fixed"; recalcMarkup(sellPrice) },
+                                    onClick = { 
+                                        mType = "Fixed"
+                                        applyFixedSuggestion(newType = "Fixed")
+                                        recalcMarkup(sellPrice) 
+                                    },
                                     shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
                                 ) { Text("₱", style = MaterialTheme.typography.labelSmall) }
                             }
