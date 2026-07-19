@@ -191,20 +191,27 @@ fun MainAppScreen() {
                 val body = mutableMapOf<String, Any>("sheetName" to action.sheetName, "action" to action.action, "data" to action.data)
                 if (action.oldData != null) body["oldData"] = action.oldData
                 val response = RetrofitClient.apiService.modifySheet(body)
-                if (response.isSuccessful || response.code() == 302) {
-                    val respStr = response.body()?.string() ?: ""
-                    if (respStr.contains("success")) {
-                        withContext(Dispatchers.Main) {
-                            pendingQueue.remove(action)
-                        }
-                        CacheManager.saveQueue(context, pendingQueue.toList())
-                    } else if (respStr.contains("error")) {
-                        withContext(Dispatchers.Main) { 
-                            Toast.makeText(context, "Sync Error for ${action.sheetName}", Toast.LENGTH_SHORT).show() 
-                        }
+                
+                // Read response body safely
+                val respStr = if (response.isSuccessful || response.code() == 302) {
+                    response.body()?.string()?.lowercase() ?: ""
+                } else {
+                    ""
+                }
+
+                if (respStr.contains("success")) {
+                    withContext(Dispatchers.Main) {
+                        pendingQueue.remove(action)
+                    }
+                    CacheManager.saveQueue(context, pendingQueue.toList())
+                } else if (respStr.contains("error")) {
+                    withContext(Dispatchers.Main) { 
+                        Toast.makeText(context, "Sync Error for ${action.sheetName}", Toast.LENGTH_SHORT).show() 
                     }
                 }
-            } catch (e: Exception) { /* Retry queue later */ }
+            } catch (e: Exception) { 
+                // Keep in queue for next retry later
+            }
         }
     }
 
@@ -1485,6 +1492,8 @@ private fun saveToDownloads(context: Context, fileName: String, content: String)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AdminEventsScreen(events: List<Event>, isLoading: Boolean, onRefresh: () -> Unit, onEdit: (Event) -> Unit, onDelete: (Event) -> Unit) {
+    val today = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date()) }
+
     PullToRefreshBox(
         isRefreshing = isLoading,
         onRefresh = onRefresh,
@@ -1496,11 +1505,17 @@ fun AdminEventsScreen(events: List<Event>, isLoading: Boolean, onRefresh: () -> 
             modifier = Modifier.fillMaxSize()
         ) {
             items(events) { e ->
-                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                val isToday = e.dateCreated.startsWith(today)
+                ElevatedCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.elevatedCardColors(
+                        containerColor = if (isToday) Color(0xFFFF7D1E).copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface
+                    )
+                ) {
                     Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(e.dateCreated, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                Text(e.dateCreated, style = MaterialTheme.typography.labelSmall, color = if (isToday) Color(0xFFFF7D1E) else Color.Gray)
                                 Text("₱${e.amount}", color = if (e.amount < 0) Color.Red else Color(0xFF00FF87), fontWeight = FontWeight.Bold)
                             }
                             Text(e.details, style = MaterialTheme.typography.bodyLarge)
