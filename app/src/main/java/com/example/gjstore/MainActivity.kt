@@ -268,9 +268,9 @@ fun MainAppScreen() {
             topBar = {
                 Surface(tonalElevation = 3.dp) {
                     Column {
-                        CenterAlignedTopAppBar(
+                        TopAppBar(
                             title = {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Column(horizontalAlignment = Alignment.Start) {
                                     Text("G&J Sari-Sari Store", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                                     if (pendingQueue.isNotEmpty()) {
                                         Text("Syncing...", color = Color(0xFFFF7D1E), style = MaterialTheme.typography.labelSmall)
@@ -278,6 +278,26 @@ fun MainAppScreen() {
                                 }
                             },
                             actions = {
+                                IconButton(
+                                    onClick = { coroutineScope.launch { refreshData() } },
+                                    modifier = Modifier.size(56.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Sync,
+                                        contentDescription = "Refresh",
+                                        modifier = Modifier.size(32.dp)
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { updateApp(context, coroutineScope) },
+                                    modifier = Modifier.size(56.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.SystemUpdate,
+                                        contentDescription = "Update",
+                                        modifier = Modifier.size(32.dp)
+                                    )
+                                }
                                 IconButton(
                                     onClick = { if (isAdminLoggedIn) isAdminLoggedIn = false else showLoginDialog = true },
                                     modifier = Modifier.size(56.dp)
@@ -1545,16 +1565,13 @@ fun DropdownSettingsManager(settings: DropdownSettings, onAction: (String, Strin
                 ScrollableTabRow(
                     selectedTabIndex = subTab, 
                     edgePadding = 0.dp, 
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                     containerColor = Color.Transparent,
                     divider = {}
                 ) { 
                     sections.forEachIndexed { i, t -> 
                         Tab(subTab == i, { subTab = i; input = ""; editIdx = -1 }, text = { Text(t) }) 
                     } 
-                }
-                IconButton(onClick = { updateApp(context, scope) }) { 
-                    Icon(Icons.Default.SystemUpdate, null, tint = Color(0xFFFF7D1E)) 
                 }
             }
         }
