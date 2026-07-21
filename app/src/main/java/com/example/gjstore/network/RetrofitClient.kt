@@ -8,7 +8,7 @@ import com.example.gjstore.BuildConfig
 
 object RetrofitClient {
     // Corrected BASE_URL: Must end with a slash, and we move 'exec' to the endpoint definition
-    private const val BASE_URL = "https://script.google.com/macros/s/AKfycbwPXFCXxIVa4zpFRuz_OqpNn0pR2TwGuZ4F36_a1HW87T6zHIDFOOWlQUNCHyS62nsk/"
+    private const val BASE_URL = "https://script.google.com/macros/s/AKfycby338lkPvJcwbHt9JthuSCkbIsfhLq4FTvHEztauRHahG6nndihqGI6cL6hQlScmAM9/"
 
     private val okHttpClient: OkHttpClient by lazy {
         val logging = HttpLoggingInterceptor().apply {
