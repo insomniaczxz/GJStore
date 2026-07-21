@@ -48,6 +48,7 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
+import java.util.UUID
 import java.util.*
 
 class MainActivity : ComponentActivity() {
@@ -1122,6 +1123,7 @@ fun AdminProductList(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AdminProductFormDialog(product: Product?, settings: DropdownSettings, onDismiss: () -> Unit, onSave: (Product) -> Unit) {
+    var isSaving by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf(product?.name ?: "") }
     var size by remember { mutableStateOf(product?.size?.toString() ?: "") }
     var cost by remember { mutableStateOf(product?.cost?.toString() ?: "") }
@@ -1327,8 +1329,12 @@ fun AdminProductFormDialog(product: Product?, settings: DropdownSettings, onDism
                     if (product != null) {
                         OutlinedButton(
                             onClick = { 
-                                onSave(Product(System.currentTimeMillis().toString(), name, brand, cat, unit, size.toDoubleOrNull() ?: 0.0, cost.toDoubleOrNull() ?: 0.0, store, mType, mVal.toDoubleOrNull() ?: 0.0, sellPrice.toDoubleOrNull() ?: 0.0, stock.toIntOrNull() ?: 0, thresh.toIntOrNull() ?: 0, SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date()), ideal.toIntOrNull() ?: 0)) 
+                                if (!isSaving) {
+                                    isSaving = true
+                                    onSave(Product(UUID.randomUUID().toString(), name, brand, cat, unit, size.toDoubleOrNull() ?: 0.0, cost.toDoubleOrNull() ?: 0.0, store, mType, mVal.toDoubleOrNull() ?: 0.0, sellPrice.toDoubleOrNull() ?: 0.0, stock.toIntOrNull() ?: 0, thresh.toIntOrNull() ?: 0, SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date()), ideal.toIntOrNull() ?: 0)) 
+                                }
                             },
+                            enabled = !isSaving,
                             modifier = Modifier.weight(1.5f),
                             contentPadding = PaddingValues(horizontal = 4.dp)
                         ) { 
@@ -1337,8 +1343,12 @@ fun AdminProductFormDialog(product: Product?, settings: DropdownSettings, onDism
                     }
                     Button(
                         onClick = { 
-                            onSave(Product(product?.id ?: System.currentTimeMillis().toString(), name, brand, cat, unit, size.toDoubleOrNull() ?: 0.0, cost.toDoubleOrNull() ?: 0.0, store, mType, mVal.toDoubleOrNull() ?: 0.0, sellPrice.toDoubleOrNull() ?: 0.0, stock.toIntOrNull() ?: 0, thresh.toIntOrNull() ?: 0, SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date()), ideal.toIntOrNull() ?: 0)) 
+                            if (!isSaving) {
+                                isSaving = true
+                                onSave(Product(product?.id ?: UUID.randomUUID().toString(), name, brand, cat, unit, size.toDoubleOrNull() ?: 0.0, cost.toDoubleOrNull() ?: 0.0, store, mType, mVal.toDoubleOrNull() ?: 0.0, sellPrice.toDoubleOrNull() ?: 0.0, stock.toIntOrNull() ?: 0, thresh.toIntOrNull() ?: 0, SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date()), ideal.toIntOrNull() ?: 0)) 
+                            }
                         },
+                        enabled = !isSaving,
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF7D1E)),
                         modifier = Modifier.weight(1.5f),
                         contentPadding = PaddingValues(horizontal = 4.dp)
@@ -2020,6 +2030,7 @@ fun AdminProductCard(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EventEntryDialog(event: Event? = null, onDismiss: () -> Unit, onSave: (Event) -> Unit) {
+    var isSaving by remember { mutableStateOf(false) }
     var details by remember { mutableStateOf(event?.details ?: "") }
     var amount by remember { mutableStateOf(event?.amount?.toString() ?: "") }
     var person by remember { mutableStateOf(if (event == null) "" else if (event.editedBy.isNotBlank()) event.editedBy else event.createdBy) }
@@ -2078,12 +2089,16 @@ fun EventEntryDialog(event: Event? = null, onDismiss: () -> Unit, onSave: (Event
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = { 
-                            val now = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date())
-                            val a = amount.toDoubleOrNull() ?: 0.0
-                            val finalized = if (event == null) Event(now, details, a, person, "", "") 
-                                            else event.copy(details = details, amount = a, editedBy = person, editedDate = now)
-                            onSave(finalized)
+                            if (!isSaving) {
+                                isSaving = true
+                                val now = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date())
+                                val a = amount.toDoubleOrNull() ?: 0.0
+                                val finalized = if (event == null) Event(now, details, a, person, "", "") 
+                                                else event.copy(details = details, amount = a, editedBy = person, editedDate = now)
+                                onSave(finalized)
+                            }
                         },
+                        enabled = !isSaving,
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF7D1E))
                     ) { Text("Save Event") }
                 }
@@ -2181,7 +2196,12 @@ object DataParser {
     fun parsePriceRecords(body: List<List<String>>?): List<PriceRecord> = body?.drop(1)?.map { row ->
         PriceRecord(row.getOrElse(0){""}, row.getOrElse(1){""}, row.getOrElse(2){""}, row.getOrNull(3)?.toDoubleOrNull() ?: 0.0, formatSheetDate(row.getOrElse(4){""}))
     } ?: emptyList()
-    fun productToRow(p: Product) = listOf(p.id, p.name, p.brand, p.category, p.unit, p.size.toString(), p.cost.toString(), p.lastBoughtStore, p.markupType, p.markupValue.toString(), p.price.toString(), p.stock.toString(), p.threshold.toString(), p.date.ifBlank { SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date()) }, p.idealStock.toString())
-    fun eventToRow(e: Event) = listOf(e.dateCreated, e.details, e.amount.toString(), e.createdBy, e.editedBy, e.editedDate)
-    fun priceRecordToRow(ph: PriceRecord) = listOf(ph.productId, ph.productName, ph.store, ph.cost.toString(), ph.date)
+    private fun sanitize(s: String?): String {
+        val str = s ?: ""
+        if (str.startsWith("=") || str.startsWith("+") || str.startsWith("-") || str.startsWith("@")) return "'$str"
+        return str
+    }
+    fun productToRow(p: Product) = listOf(p.id, p.name, p.brand, p.category, p.unit, p.size.toString(), p.cost.toString(), p.lastBoughtStore, p.markupType, p.markupValue.toString(), p.price.toString(), p.stock.toString(), p.threshold.toString(), p.date.ifBlank { SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date()) }, p.idealStock.toString()).map { sanitize(it) }
+    fun eventToRow(e: Event) = listOf(e.dateCreated, e.details, e.amount.toString(), e.createdBy, e.editedBy, e.editedDate).map { sanitize(it) }
+    fun priceRecordToRow(ph: PriceRecord) = listOf(ph.productId, ph.productName, ph.store, ph.cost.toString(), ph.date).map { sanitize(it) }
 }
