@@ -14,6 +14,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
@@ -36,6 +37,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.sp
@@ -108,6 +112,8 @@ fun MainAppScreen() {
     var isLoading by remember { mutableStateOf(true) }
     var isEventsLoading by remember { mutableStateOf(false) }
     val dynamicSettings = remember { DropdownSettings() }
+    val customersList = remember { mutableStateListOf<Customer>() }
+    val utangTransactionsList = remember { mutableStateListOf<UtangTransaction>() }
 
     var appPin by remember { mutableStateOf(CacheManager.loadPin(context)) }
     var isPinEnabled by remember { mutableStateOf(CacheManager.loadPinEnabled(context)) }
@@ -139,40 +145,56 @@ fun MainAppScreen() {
     suspend fun refreshData() {
         isLoading = true; isEventsLoading = true
         try {
-            val pRes = RetrofitClient.apiService.readSheet("Products")
-            if (pRes.isSuccessful) {
-                val newP = DataParser.parseProducts(pRes.body())
-                withContext(Dispatchers.Main) {
-                    productsList.clear()
-                    productsList.addAll(newP)
-                    productsVersion++
+            coroutineScope {
+                val pDef = async { RetrofitClient.apiService.readSheet("Products") }
+                val sDef = async { RetrofitClient.apiService.readSheet("Settings") }
+                val eDef = async { RetrofitClient.apiService.readSheet("Events") }
+                val phDef = async { RetrofitClient.apiService.readSheet("PriceHistory") }
+                val cDef = async { RetrofitClient.apiService.readSheet("Customers") }
+                val tDef = async { RetrofitClient.apiService.readSheet("UtangTransactions") }
+
+                val pRes = pDef.await()
+                if (pRes.isSuccessful) {
+                    val newP = DataParser.parseProducts(pRes.body())
+                    withContext(Dispatchers.Main) {
+                        productsList.clear(); productsList.addAll(newP); productsVersion++
+                    }
+                    withContext(Dispatchers.IO) { CacheManager.saveProducts(context, newP) }
                 }
-                withContext(Dispatchers.IO) { CacheManager.saveProducts(context, newP) }
-            }
-            val sRes = RetrofitClient.apiService.readSheet("Settings")
-            if (sRes.isSuccessful) {
-                withContext(Dispatchers.Main) {
-                    DataParser.parseSettings(sRes.body(), dynamicSettings)
+
+                val sRes = sDef.await()
+                if (sRes.isSuccessful) {
+                    withContext(Dispatchers.Main) { DataParser.parseSettings(sRes.body(), dynamicSettings) }
+                    withContext(Dispatchers.IO) { CacheManager.saveSettings(context, dynamicSettings) }
                 }
-                withContext(Dispatchers.IO) { CacheManager.saveSettings(context, dynamicSettings) }
-            }
-            val eRes = RetrofitClient.apiService.readSheet("Events")
-            if (eRes.isSuccessful) {
-                val newE = DataParser.parseEvents(eRes.body())
-                withContext(Dispatchers.Main) {
-                    eventsList.clear()
-                    eventsList.addAll(newE)
+
+                val eRes = eDef.await()
+                if (eRes.isSuccessful) {
+                    val newE = DataParser.parseEvents(eRes.body())
+                    withContext(Dispatchers.Main) { eventsList.clear(); eventsList.addAll(newE) }
+                    withContext(Dispatchers.IO) { CacheManager.saveEvents(context, newE) }
                 }
-                withContext(Dispatchers.IO) { CacheManager.saveEvents(context, newE) }
-            }
-            val phRes = RetrofitClient.apiService.readSheet("PriceHistory")
-            if (phRes.isSuccessful) {
-                val newPH = DataParser.parsePriceRecords(phRes.body())
-                withContext(Dispatchers.Main) {
-                    priceRecords.clear()
-                    priceRecords.addAll(newPH)
+
+                val phRes = phDef.await()
+                if (phRes.isSuccessful) {
+                    val newPH = DataParser.parsePriceRecords(phRes.body())
+                    withContext(Dispatchers.Main) { priceRecords.clear(); priceRecords.addAll(newPH) }
+                    withContext(Dispatchers.IO) { CacheManager.savePriceRecords(context, newPH) }
                 }
-                withContext(Dispatchers.IO) { CacheManager.savePriceRecords(context, newPH) }
+
+                val cRes = cDef.await()
+                if (cRes.isSuccessful) {
+                    val newC = DataParser.parseCustomers(cRes.body())
+                    withContext(Dispatchers.Main) { customersList.clear(); customersList.addAll(newC) }
+                    withContext(Dispatchers.IO) { CacheManager.saveCustomers(context, newC) }
+                }
+
+                val tRes = tDef.await()
+                if (tRes.isSuccessful) {
+                    val newT = DataParser.parseUtangTransactions(tRes.body())
+                    withContext(Dispatchers.Main) { utangTransactionsList.clear(); utangTransactionsList.addAll(newT) }
+                    withContext(Dispatchers.IO) { CacheManager.saveUtangTransactions(context, newT) }
+                }
             }
         } catch (e: Exception) { 
             withContext(Dispatchers.Main) { 
@@ -227,8 +249,11 @@ fun MainAppScreen() {
                 val cachedQueue = CacheManager.loadQueue(context)
                 val cachedPin = CacheManager.loadPin(context)
                 val cachedPinEnabled = CacheManager.loadPinEnabled(context)
+                val cachedCustomers = CacheManager.loadCustomers(context)
+                val cachedUtang = CacheManager.loadUtangTransactions(context)
                 withContext(Dispatchers.Main) {
                     productsList.addAll(cachedProducts); eventsList.addAll(cachedEvents); priceRecords.addAll(cachedPriceRecords); pendingQueue.addAll(cachedQueue)
+                    customersList.addAll(cachedCustomers); utangTransactionsList.addAll(cachedUtang)
                     appPin = cachedPin
                     isPinEnabled = cachedPinEnabled
                     cachedSettings?.let {
@@ -237,6 +262,7 @@ fun MainAppScreen() {
                         dynamicSettings.units.clear(); dynamicSettings.units.addAll(it.units)
                         dynamicSettings.stores.clear(); dynamicSettings.stores.addAll(it.stores)
                         dynamicSettings.messengerKeys.clear(); dynamicSettings.messengerKeys.addAll(it.messengerKeys)
+                        dynamicSettings.employees.clear(); dynamicSettings.employees.addAll(it.employees)
                     }
                     coroutineScope.launch(Dispatchers.IO) {
                         pendingQueue.toList().forEach { performAction(it) }
@@ -399,7 +425,22 @@ fun MainAppScreen() {
                                 }
                             )
                             1 -> EventsTab(eventsList, isEventsLoading, { coroutineScope.launch { refreshData() } })
-                            2 -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Utang - Coming Soon", color = Color.Gray) }
+                            2 -> UtangTab(
+                                customersList,
+                                utangTransactionsList,
+                                dynamicSettings,
+                                productsList,
+                                onAction = { action ->
+                                    pendingQueue.add(action)
+                                    performAction(action)
+                                    coroutineScope.launch(Dispatchers.IO) { 
+                                        CacheManager.saveQueue(context, pendingQueue.toList())
+                                        CacheManager.saveCustomers(context, customersList.toList())
+                                        CacheManager.saveUtangTransactions(context, utangTransactionsList.toList())
+                                    }
+                                },
+                                refreshData = { coroutineScope.launch { refreshData() } }
+                            )
                             3 -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Basiyo - Coming Soon", color = Color.Gray) }
                         }
                     } else {
@@ -445,10 +486,21 @@ fun MainAppScreen() {
                                 Toast.makeText(context, "Event Deleted", Toast.LENGTH_SHORT).show()
                             }, 
                             { sheet, action, data, oldData ->
-                                val act = PendingAction(sheet, action, data, oldData)
+                                // Ensure the data list has at least 6 elements (for Employees column)
+                                val paddedData = data.toMutableList()
+                                while (paddedData.size < 6) paddedData.add("")
+                                val paddedOldData = oldData?.toMutableList()
+                                if (paddedOldData != null) {
+                                    while (paddedOldData.size < 6) paddedOldData.add("")
+                                }
+                                
+                                val act = PendingAction(sheet, action, paddedData, paddedOldData)
                                 pendingQueue.add(act); performAction(act)
                                 coroutineScope.launch(Dispatchers.IO) { CacheManager.saveSettings(context, dynamicSettings); CacheManager.saveQueue(context, pendingQueue.toList()) }
                                 Toast.makeText(context, "Settings updated", Toast.LENGTH_SHORT).show()
+                                
+                                // Automatic refresh if settings changed (to reflect in dropdowns)
+                                coroutineScope.launch { refreshData() }
                             },
                             isPinEnabled,
                             { isPinEnabled = it }
@@ -459,7 +511,7 @@ fun MainAppScreen() {
         }
 
         if (showLoginDialog) AdminLoginDialog({ showLoginDialog = false }, { isAdminLoggedIn = true; showLoginDialog = false })
-        if (showEventDialog) EventEntryDialog(editingEvent, { showEventDialog = false; editingEvent = null }, { event ->
+        if (showEventDialog) EventEntryDialog(editingEvent, dynamicSettings, { showEventDialog = false; editingEvent = null }, { event ->
             val action = if (editingEvent == null) "add" else "update"
             val data = DataParser.eventToRow(event)
             val oldData = if (editingEvent != null) DataParser.eventToRow(editingEvent!!) else null
@@ -1565,7 +1617,7 @@ fun AdminEventsScreen(events: List<Event>, isLoading: Boolean, onRefresh: () -> 
 @Composable
 fun DropdownSettingsManager(settings: DropdownSettings, onAction: (String, String, List<String?>, List<String?>?) -> Unit, isPinEnabled: Boolean, onPinEnabledChange: (Boolean) -> Unit) {
     var subTab by remember { mutableIntStateOf(0) }
-    val sections = listOf("Brands", "Categories", "Units", "Stores", "Messenger", "Security")
+    val sections = listOf("Brands", "Categories", "Units", "Stores", "Messenger", "Employees", "Security")
     var input by remember { mutableStateOf("") }; var editIdx by remember { mutableIntStateOf(-1) }; var oldVal by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope(); val context = LocalContext.current
     
@@ -1587,13 +1639,13 @@ fun DropdownSettingsManager(settings: DropdownSettings, onAction: (String, Strin
         }
 
         Box(modifier = Modifier.weight(1f)) {
-            if (subTab == 5) {
+            if (subTab == 6) {
                 SecuritySettings(onAction, isPinEnabled, onPinEnabledChange)
             } else {
                 val list = when(subTab) { 
-                    0 -> settings.brands; 1 -> settings.categories; 2 -> settings.units; 3 -> settings.stores; else -> settings.messengerKeys 
+                    0 -> settings.brands; 1 -> settings.categories; 2 -> settings.units; 3 -> settings.stores; 4 -> settings.messengerKeys; else -> settings.employees 
                 }
-                val sortedList by remember(subTab) { derivedStateOf { list.sortedBy { it.lowercase() } } }
+                val sortedList by remember(subTab) { derivedStateOf { list.toList().sortedBy { it.lowercase() } } }
 
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1608,9 +1660,9 @@ fun DropdownSettingsManager(settings: DropdownSettings, onAction: (String, Strin
                         Button(
                             onClick = {
                                 if (input.isNotBlank()) {
-                                    val newVal = input.trim(); val payload = MutableList(5) { "" }.apply { set(subTab, newVal) }
+                                    val newVal = input.trim(); val payload = MutableList(6) { "" }.apply { set(subTab, newVal) }
                                     val action = if (editIdx == -1) "add" else "update"
-                                    val oldPayload = if (editIdx != -1) MutableList(5) { "" }.apply { set(subTab, oldVal) } else null
+                                    val oldPayload = if (editIdx != -1) MutableList(6) { "" }.apply { set(subTab, oldVal) } else null
                                     if (editIdx == -1) { if (!list.contains(newVal)) list.add(newVal) } else { list[editIdx] = newVal; editIdx = -1 }
                                     onAction("Settings", action, payload, oldPayload); input = ""
                                 }
@@ -1632,7 +1684,7 @@ fun DropdownSettingsManager(settings: DropdownSettings, onAction: (String, Strin
                                         Icon(Icons.Default.Edit, null, tint = Color.LightGray) 
                                     }
                                     IconButton(onClick = { 
-                                        val p = MutableList(5) { "" }.apply { set(subTab, s) }
+                                        val p = MutableList(6) { "" }.apply { set(subTab, s) }
                                         list.remove(s)
                                         onAction("Settings", "delete", p, p) 
                                     }) { 
@@ -1841,6 +1893,488 @@ fun EventsTab(events: List<Event>, isLoading: Boolean, onRefresh: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun UtangTab(
+    customers: SnapshotStateList<Customer>,
+    transactions: SnapshotStateList<UtangTransaction>,
+    settings: DropdownSettings,
+    products: List<Product>,
+    onAction: (PendingAction) -> Unit,
+    refreshData: () -> Unit
+) {
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedFilter by remember { mutableIntStateOf(0) } // 0: Active, 1: All, 2: > 1 Month, 3: > 1 Year
+    var showAddCustomerDialog by remember { mutableStateOf(false) }
+    var selectedCustomer by remember { mutableStateOf<Customer?>(null) }
+    var showTransactionDialog by remember { mutableStateOf<Pair<Customer, String>?>(null) } // Customer to Type ("Credit", "Kuwang", "Payment")
+
+    val totalOutstanding = remember(customers.size, customers.sumOf { it.totalOutstanding }) { customers.sumOf { it.totalOutstanding } }
+
+    val filteredCustomers by remember(customers.toList(), searchQuery, selectedFilter) {
+        derivedStateOf {
+            val now = Calendar.getInstance().time
+            customers.filter {
+                (searchQuery.isEmpty() || it.name.contains(searchQuery, ignoreCase = true) || it.nicknames.contains(searchQuery, ignoreCase = true)) &&
+                when (selectedFilter) {
+                    0 -> it.totalOutstanding > 0.1
+                    2 -> {
+                        val lastDate = DataParser.parseAnyDate(it.lastTransactionDate)
+                        it.totalOutstanding > 0.1 && lastDate != null && (now.time - lastDate.time) > 30L * 24 * 60 * 60 * 1000
+                    }
+                    3 -> {
+                        val lastDate = DataParser.parseAnyDate(it.lastTransactionDate)
+                        it.totalOutstanding > 0.1 && lastDate != null && (now.time - lastDate.time) > 365L * 24 * 60 * 60 * 1000
+                    }
+                    else -> true
+                }
+            }.sortedBy { it.name.lowercase() }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Summary Card
+        Surface(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            color = Color(0xFFFF7D1E).copy(alpha = 0.1f),
+            shape = MaterialTheme.shapes.large,
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFF7D1E).copy(alpha = 0.3f))
+        ) {
+            Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Total Outstanding Balance", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
+                Text("₱${String.format("%,.2f", totalOutstanding)}", style = MaterialTheme.typography.headlineLarge, color = Color(0xFFFF7D1E), fontWeight = FontWeight.Bold)
+            }
+        }
+
+        // Search and Filters
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = { Text("Search Customer...", style = MaterialTheme.typography.bodyMedium) },
+                leadingIcon = { Icon(Icons.Default.Search, null) },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                shape = MaterialTheme.shapes.medium
+            )
+            FloatingActionButton(
+                onClick = { showAddCustomerDialog = true },
+                modifier = Modifier.size(56.dp),
+                containerColor = Color(0xFFFF7D1E),
+                contentColor = Color.White
+            ) {
+                Icon(Icons.Default.PersonAdd, null)
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            listOf("Active", "All", ">1M", ">1Y").forEachIndexed { index, label ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically, 
+                    modifier = Modifier.clickable { selectedFilter = index }
+                ) {
+                    RadioButton(
+                        selected = selectedFilter == index, 
+                        onClick = { selectedFilter = index }, 
+                        colors = RadioButtonDefaults.colors(selectedColor = Color(0xFFFF7D1E)),
+                        modifier = Modifier.size(32.dp)
+                    )
+                    Text(label, style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+
+        PullToRefreshBox(
+            isRefreshing = false,
+            onRefresh = refreshData,
+            modifier = Modifier.fillMaxSize()
+        ) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(filteredCustomers) { customer ->
+                    CustomerCard(
+                        customer,
+                        onClick = { selectedCustomer = customer },
+                        onPay = { showTransactionDialog = customer to "Payment" },
+                        onCredit = { showTransactionDialog = customer to "Credit" }
+                    )
+                }
+            }
+        }
+    }
+
+    if (showAddCustomerDialog) {
+        AddCustomerDialog(
+            products = products,
+            settings = settings,
+            onDismiss = { showAddCustomerDialog = false },
+            onSave = { name, nicknames, initialTransaction ->
+                val customerId = UUID.randomUUID().toString()
+                val dateStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date())
+                val newCustomer = Customer(
+                    id = customerId,
+                    name = name,
+                    nicknames = nicknames,
+                    dateCreated = dateStr,
+                    lastTransactionDate = dateStr,
+                    totalOutstanding = initialTransaction?.amount ?: 0.0
+                )
+                
+                // Optimistic Local Update
+                customers.add(newCustomer)
+                onAction(PendingAction("Customers", "add", DataParser.customerToRow(newCustomer)))
+                
+                initialTransaction?.let { trans ->
+                    val finalTrans = trans.copy(id = UUID.randomUUID().toString(), customerId = customerId, customerName = name, date = dateStr)
+                    transactions.add(0, finalTrans)
+                    onAction(PendingAction("UtangTransactions", "add", DataParser.utangToRow(finalTrans)))
+                }
+                
+                showAddCustomerDialog = false
+            }
+        )
+    }
+
+    selectedCustomer?.let { customer ->
+        CustomerDetailDialog(
+            customer,
+            transactions.filter { it.customerId == customer.id },
+            onDismiss = { selectedCustomer = null }
+        )
+    }
+
+    showTransactionDialog?.let { (customer, type) ->
+        AddTransactionDialog(
+            customer,
+            type,
+            settings,
+            products,
+            onDismiss = { showTransactionDialog = null },
+            onSave = { transaction ->
+                val dateStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date())
+                val finalTrans = transaction.copy(date = dateStr)
+                
+                // Optimistic Local Update
+                transactions.add(0, finalTrans)
+                val idx = customers.indexOfFirst { it.id == customer.id }
+                if (idx != -1) {
+                    val old = customers[idx]
+                    val newBalance = if (finalTrans.type == "Payment") old.totalOutstanding - finalTrans.amount else old.totalOutstanding + finalTrans.amount
+                    customers[idx] = old.copy(totalOutstanding = newBalance, lastTransactionDate = dateStr)
+                }
+                
+                onAction(PendingAction("UtangTransactions", "add", DataParser.utangToRow(finalTrans)))
+                showTransactionDialog = null
+            }
+        )
+    }
+}
+
+@Composable
+fun CustomerCard(customer: Customer, onClick: () -> Unit, onPay: () -> Unit, onCredit: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable { onClick() },
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(customer.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                if (customer.nicknames.isNotEmpty()) {
+                    Text(customer.nicknames, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "Balance: ₱${String.format("%,.2f", customer.totalOutstanding)}",
+                    color = if (customer.totalOutstanding > 0) Color(0xFFFF7D1E) else Color.Green,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                IconButton(onClick = onCredit, modifier = Modifier.background(Color(0xFFFF7D1E).copy(alpha = 0.1f), CircleShape)) {
+                    Icon(Icons.Default.Add, "Add Credit", tint = Color(0xFFFF7D1E))
+                }
+                IconButton(onClick = onPay, modifier = Modifier.background(Color.Green.copy(alpha = 0.1f), CircleShape)) {
+                    Icon(Icons.Default.Payments, "Pay", tint = Color.Green)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AddCustomerDialog(
+    products: List<Product>,
+    settings: DropdownSettings,
+    onDismiss: () -> Unit, 
+    onSave: (String, String, UtangTransaction?) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    var nicknames by remember { mutableStateOf("") }
+    var includeInitialCredit by remember { mutableStateOf(false) }
+    
+    // Transaction fields
+    var type by remember { mutableStateOf("Credit") }
+    var notes by remember { mutableStateOf("") }
+    var recordedBy by remember { mutableStateOf("") }
+    var selectedItems = remember { mutableStateListOf<Pair<Product, Int>>() }
+    var showProductPicker by remember { mutableStateOf(false) }
+
+    val totalAmount = selectedItems.sumOf { it.first.price * it.second }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add New Customer") },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Full Name") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = nicknames, onValueChange = { nicknames = it }, label = { Text("Nicknames (Optional)") }, modifier = Modifier.fillMaxWidth())
+                
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { includeInitialCredit = !includeInitialCredit }) {
+                    Checkbox(checked = includeInitialCredit, onCheckedChange = { includeInitialCredit = it })
+                    Text("Add Credit/Kuwang Immediately", style = MaterialTheme.typography.bodyMedium)
+                }
+
+                if (includeInitialCredit) {
+                    Surface(color = Color.Black.copy(alpha = 0.2f), shape = MaterialTheme.shapes.medium, modifier = Modifier.padding(vertical = 4.dp)) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { type = if (type == "Credit") "Kuwang" else "Credit" }) {
+                                RadioButton(selected = type == "Credit", onClick = { type = "Credit" })
+                                Text("Credit", style = MaterialTheme.typography.bodySmall)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                RadioButton(selected = type == "Kuwang", onClick = { type = "Kuwang" })
+                                Text("Lacking", style = MaterialTheme.typography.bodySmall)
+                            }
+                            
+                            Text("Items", style = MaterialTheme.typography.labelSmall)
+                            selectedItems.forEach { (p, q) ->
+                                Text("• ${p.name} x$q (₱${String.format("%,.2f", p.price * q)})", style = MaterialTheme.typography.bodySmall)
+                            }
+                            
+                            Button(onClick = { showProductPicker = true }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF7D1E).copy(alpha = 0.8f))) {
+                                Text("Add Item", fontSize = 12.sp, color = Color.White)
+                            }
+                            
+                            Text("Total: ₱${String.format("%,.2f", totalAmount)}", fontWeight = FontWeight.Bold, color = Color(0xFFFF7D1E))
+                            
+                            DropdownField("Recorded By", recordedBy, settings.employees, { recordedBy = it })
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { 
+                    if (name.isNotBlank()) {
+                        val trans = if (includeInitialCredit && recordedBy.isNotBlank() && totalAmount > 0) {
+                            UtangTransaction(
+                                type = type,
+                                amount = totalAmount,
+                                itemsSummary = selectedItems.joinToString(", ") { "${it.first.name} x${it.second}" },
+                                recordedBy = recordedBy,
+                                notes = notes
+                            )
+                        } else null
+                        onSave(name, nicknames, trans)
+                    }
+                }, 
+                enabled = name.isNotBlank() && (!includeInitialCredit || (recordedBy.isNotBlank() && totalAmount > 0))
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+
+    if (showProductPicker) {
+        ProductPickerList(products, onSelect = { product, qty -> 
+            selectedItems.add(product to qty)
+            showProductPicker = false
+        }, onDismiss = { showProductPicker = false })
+    }
+}
+
+@Composable
+fun AddTransactionDialog(
+    customer: Customer,
+    initialType: String,
+    settings: DropdownSettings,
+    products: List<Product>,
+    onDismiss: () -> Unit,
+    onSave: (UtangTransaction) -> Unit
+) {
+    var type by remember { mutableStateOf(initialType) }
+    var amount by remember { mutableStateOf("") }
+    var notes by remember { mutableStateOf("") }
+    var recordedBy by remember { mutableStateOf("") }
+    var selectedItems = remember { mutableStateListOf<Pair<Product, Int>>() }
+    var showProductPicker by remember { mutableStateOf(false) }
+
+    val totalAmount = if (type == "Payment") {
+        amount.toDoubleOrNull() ?: 0.0
+    } else {
+        selectedItems.sumOf { it.first.price * it.second }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Record $type for ${customer.name}") },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (type != "Payment") {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { type = if (type == "Credit") "Kuwang" else "Credit" }) {
+                        RadioButton(selected = type == "Credit", onClick = { type = "Credit" })
+                        Text("Credit (Utang)", style = MaterialTheme.typography.bodyMedium)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        RadioButton(selected = type == "Kuwang", onClick = { type = "Kuwang" })
+                        Text("Lacking (Kuwang)", style = MaterialTheme.typography.bodyMedium)
+                    }
+
+                    Text("Items", style = MaterialTheme.typography.titleSmall)
+                    selectedItems.forEach { (product, qty) ->
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("${product.name} x$qty", modifier = Modifier.weight(1f))
+                            Text("₱${String.format("%,.2f", product.price * qty)}")
+                        }
+                    }
+                    Button(onClick = { showProductPicker = true }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF7D1E).copy(alpha = 0.8f))) {
+                        Icon(Icons.Default.Add, null, tint = Color.White); Spacer(Modifier.width(8.dp)); Text("Add Item", color = Color.White)
+                    }
+                    HorizontalDivider()
+                    Text("Total: ₱${String.format("%,.2f", totalAmount)}", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge, color = Color(0xFFFF7D1E))
+                } else {
+                    OutlinedTextField(
+                        value = amount,
+                        onValueChange = { amount = it },
+                        label = { Text("Payment Amount") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { amount = customer.totalOutstanding.toString() }, modifier = Modifier.weight(1f)) { Text("Full Pay") }
+                    }
+                }
+
+                DropdownField("Recorded By", recordedBy, settings.employees, { recordedBy = it })
+                OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Notes (Optional)") }, modifier = Modifier.fillMaxWidth())
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val finalAmount = if (type == "Payment") amount.toDoubleOrNull() ?: 0.0 else totalAmount
+                    val summary = if (type != "Payment") selectedItems.joinToString(", ") { "${it.first.name} x${it.second}" } else "Payment"
+                    onSave(UtangTransaction(
+                        id = UUID.randomUUID().toString(),
+                        customerId = customer.id,
+                        customerName = customer.name,
+                        type = type,
+                        amount = finalAmount,
+                        itemsSummary = summary,
+                        recordedBy = recordedBy,
+                        notes = notes
+                    ))
+                },
+                enabled = recordedBy.isNotBlank() && (totalAmount > 0 || (type == "Payment" && (amount.toDoubleOrNull() ?: 0.0) > 0))
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+
+    if (showProductPicker) {
+        ProductPickerList(products, onSelect = { product, qty -> 
+            selectedItems.add(product to qty)
+            showProductPicker = false
+        }, onDismiss = { showProductPicker = false })
+    }
+}
+
+@Composable
+fun ProductPickerList(products: List<Product>, onSelect: (Product, Int) -> Unit, onDismiss: () -> Unit) {
+    var query by remember { mutableStateOf("") }
+    val filtered = products.filter { (it.name.contains(query, ignoreCase = true) || it.brand.contains(query, ignoreCase = true)) && it.price > 0 }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { 
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text("Search Product...") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+        },
+        text = {
+            LazyColumn(modifier = Modifier.height(400.dp)) {
+                items(filtered) { product ->
+                    var qty by remember { mutableStateOf("1") }
+                    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(product.name, style = MaterialTheme.typography.bodyMedium)
+                            Text("₱${product.price}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        }
+                        OutlinedTextField(
+                            value = qty,
+                            onValueChange = { qty = it },
+                            modifier = Modifier.width(60.dp),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true
+                        )
+                        IconButton(onClick = { onSelect(product, qty.toIntOrNull() ?: 1) }) {
+                            Icon(Icons.Default.Check, null, tint = Color.Green)
+                        }
+                    }
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp, color = Color.Gray.copy(alpha = 0.2f))
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
+}
+
+@Composable
+fun CustomerDetailDialog(customer: Customer, transactions: List<UtangTransaction>, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("${customer.name}'s History") },
+        text = {
+            Column(modifier = Modifier.height(500.dp)) {
+                LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(transactions) { t ->
+                        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF2C2C2C))) {
+                            Column(modifier = Modifier.padding(12.dp).fillMaxWidth()) {
+                                Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                                    Text(t.type, fontWeight = FontWeight.Bold, color = if (t.type == "Payment") Color.Green else Color(0xFFFF7D1E))
+                                    Text(t.date, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                }
+                                Text("Amount: ₱${String.format("%,.2f", t.amount)}", style = MaterialTheme.typography.titleSmall)
+                                Text("Items: ${t.itemsSummary}", style = MaterialTheme.typography.bodySmall)
+                                if (t.notes.isNotEmpty()) Text("Notes: ${t.notes}", style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
+                                Text("By: ${t.recordedBy}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { Button(onClick = onDismiss) { Text("Close") } }
+    )
+}
+
 @Composable
 fun AdminBatchTools(
     onApplyMarkup: (String, String) -> Unit,
@@ -2029,7 +2563,7 @@ fun AdminProductCard(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun EventEntryDialog(event: Event? = null, onDismiss: () -> Unit, onSave: (Event) -> Unit) {
+fun EventEntryDialog(event: Event? = null, settings: DropdownSettings, onDismiss: () -> Unit, onSave: (Event) -> Unit) {
     var isSaving by remember { mutableStateOf(false) }
     var details by remember { mutableStateOf(event?.details ?: "") }
     var amount by remember { mutableStateOf(event?.amount?.toString() ?: "") }
@@ -2073,15 +2607,11 @@ fun EventEntryDialog(event: Event? = null, onDismiss: () -> Unit, onSave: (Event
                     trailingIcon = { if (amount.isNotEmpty()) IconButton(onClick = { amount = "" }) { Icon(Icons.Default.Close, null) } }
                 )
                 
-                OutlinedTextField(
-                    value = person, 
-                    onValueChange = { 
-                        person = it.replaceFirstChar { char -> if (char.isLowerCase()) char.titlecase(Locale.getDefault()) else char.toString() }
-                    },
-                    label = { Text(if (event == null) "Your Name (Created By)" else "Your Name (Edited By)") }, 
-                    modifier = Modifier.fillMaxWidth(),
-                    leadingIcon = { Icon(Icons.Default.Person, null) },
-                    trailingIcon = { if (person.isNotEmpty()) IconButton(onClick = { person = "" }) { Icon(Icons.Default.Close, null) } }
+                DropdownField(
+                    label = if (event == null) "Recorded By (Created By)" else "Recorded By (Edited By)",
+                    value = person,
+                    options = settings.employees,
+                    onValueChange = { person = it }
                 )
                 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -2098,7 +2628,7 @@ fun EventEntryDialog(event: Event? = null, onDismiss: () -> Unit, onSave: (Event
                                 onSave(finalized)
                             }
                         },
-                        enabled = !isSaving,
+                        enabled = !isSaving && person.isNotBlank(),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF7D1E))
                     ) { Text("Save Event") }
                 }
@@ -2114,12 +2644,18 @@ object CacheManager {
     fun loadEvents(ctx: Context): List<Event> = try { val f = File(ctx.filesDir, "events_cache.json"); if (f.exists()) Gson().fromJson(f.readText(), object : TypeToken<List<Event>>() {}.type) else emptyList() } catch (e: Exception) { emptyList() }
     fun savePriceRecords(ctx: Context, list: List<PriceRecord>) = File(ctx.filesDir, "price_cache.json").writeText(Gson().toJson(list))
     fun loadPriceRecords(ctx: Context): List<PriceRecord> = try { val f = File(ctx.filesDir, "price_cache.json"); if (f.exists()) Gson().fromJson(f.readText(), object : TypeToken<List<PriceRecord>>() {}.type) else emptyList() } catch (e: Exception) { emptyList() }
-    fun saveSettings(ctx: Context, s: DropdownSettings) = File(ctx.filesDir, "settings_cache.json").writeText(Gson().toJson(mapOf("brands" to s.brands, "categories" to s.categories, "units" to s.units, "stores" to s.stores, "messenger" to s.messengerKeys)))
+    
+    fun saveCustomers(ctx: Context, list: List<Customer>) = File(ctx.filesDir, "customers_cache.json").writeText(Gson().toJson(list))
+    fun loadCustomers(ctx: Context): List<Customer> = try { val f = File(ctx.filesDir, "customers_cache.json"); if (f.exists()) Gson().fromJson(f.readText(), object : TypeToken<List<Customer>>() {}.type) else emptyList() } catch (e: Exception) { emptyList() }
+    fun saveUtangTransactions(ctx: Context, list: List<UtangTransaction>) = File(ctx.filesDir, "utang_transactions_cache.json").writeText(Gson().toJson(list))
+    fun loadUtangTransactions(ctx: Context): List<UtangTransaction> = try { val f = File(ctx.filesDir, "utang_transactions_cache.json"); if (f.exists()) Gson().fromJson(f.readText(), object : TypeToken<List<UtangTransaction>>() {}.type) else emptyList() } catch (e: Exception) { emptyList() }
+
+    fun saveSettings(ctx: Context, s: DropdownSettings) = File(ctx.filesDir, "settings_cache.json").writeText(Gson().toJson(mapOf("brands" to s.brands, "categories" to s.categories, "units" to s.units, "stores" to s.stores, "messenger" to s.messengerKeys, "employees" to s.employees)))
     fun loadSettings(ctx: Context): DropdownSettings? = try {
         val f = File(ctx.filesDir, "settings_cache.json")
         if (f.exists()) {
             val m: Map<String, List<String>> = Gson().fromJson(f.readText(), object : TypeToken<Map<String, List<String>>>() {}.type)
-            DropdownSettings().apply { m["brands"]?.let { brands.addAll(it) }; m["categories"]?.let { categories.addAll(it) }; m["units"]?.let { units.addAll(it) }; m["stores"]?.let { stores.addAll(it) }; m["messenger"]?.let { messengerKeys.addAll(it) } }
+            DropdownSettings().apply { m["brands"]?.let { brands.addAll(it) }; m["categories"]?.let { categories.addAll(it) }; m["units"]?.let { units.addAll(it) }; m["stores"]?.let { stores.addAll(it) }; m["messenger"]?.let { messengerKeys.addAll(it) }; m["employees"]?.let { employees.addAll(it) } }
         } else null
     } catch (e: Exception) { null }
     fun saveAdmin(ctx: Context, pw: String) = File(ctx.filesDir, "admin_cache.txt").writeText(pw)
@@ -2181,21 +2717,43 @@ object DataParser {
         return list
     }
     fun parseSettings(body: List<List<String>>?, ds: DropdownSettings) {
-        ds.brands.clear(); ds.categories.clear(); ds.units.clear(); ds.stores.clear(); ds.messengerKeys.clear()
+        ds.brands.clear(); ds.categories.clear(); ds.units.clear(); ds.stores.clear(); ds.messengerKeys.clear(); ds.employees.clear()
         body?.drop(1)?.forEach { row ->
             row.getOrNull(0)?.takeIf { it.isNotBlank() }?.let { ds.brands.add(it.trim()) }
             row.getOrNull(1)?.takeIf { it.isNotBlank() }?.let { ds.categories.add(it.trim()) }
             row.getOrNull(2)?.takeIf { it.isNotBlank() }?.let { ds.units.add(it.trim()) }
             row.getOrNull(3)?.takeIf { it.isNotBlank() }?.let { ds.stores.add(it.trim()) }
             row.getOrNull(4)?.takeIf { it.isNotBlank() }?.let { ds.messengerKeys.add(it.trim()) }
+            row.getOrNull(5)?.takeIf { it.isNotBlank() }?.let { ds.employees.add(it.trim()) }
         }
     }
     fun parseEvents(body: List<List<String>>?): List<Event> = body?.drop(1)?.map { row ->
         Event(formatSheetDate(row.getOrElse(0){""}), row.getOrElse(1){""}, row.getOrNull(2)?.toDoubleOrNull() ?: 0.0, row.getOrElse(3){""}, row.getOrElse(4){""}, row.getOrElse(5){""})
     }?.reversed() ?: emptyList()
+    fun parseCustomers(body: List<List<String>>?): List<Customer> = body?.drop(1)?.map { row ->
+        Customer(row.getOrElse(0){""}, row.getOrElse(1){""}, row.getOrElse(2){""}, row.getOrNull(3)?.toDoubleOrNull() ?: 0.0, formatSheetDate(row.getOrElse(4){""}), formatSheetDate(row.getOrElse(5){""}))
+    } ?: emptyList()
+    fun parseUtangTransactions(body: List<List<String>>?): List<UtangTransaction> = body?.drop(1)?.map { row ->
+        UtangTransaction(row.getOrElse(0){""}, row.getOrElse(1){""}, row.getOrElse(2){""}, row.getOrElse(3){""}, row.getOrNull(4)?.toDoubleOrNull() ?: 0.0, row.getOrElse(5){""}, formatSheetDate(row.getOrElse(6){""}), row.getOrElse(7){""}, row.getOrElse(8){""})
+    }?.reversed() ?: emptyList()
     fun parsePriceRecords(body: List<List<String>>?): List<PriceRecord> = body?.drop(1)?.map { row ->
         PriceRecord(row.getOrElse(0){""}, row.getOrElse(1){""}, row.getOrElse(2){""}, row.getOrNull(3)?.toDoubleOrNull() ?: 0.0, formatSheetDate(row.getOrElse(4){""}))
     } ?: emptyList()
+
+    fun parseAnyDate(input: String): Date? {
+        if (input.isBlank()) return null
+        val asLong = input.replace(",", "").toLongOrNull()
+        if (asLong != null && asLong > 1000000000L) return Date(asLong)
+        val formats = listOf("yyyy-MM-dd hh:mm a", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm", "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", "yyyy-MM-dd")
+        for (f in formats) {
+            try { 
+                val sdf = SimpleDateFormat(f, Locale.getDefault())
+                return sdf.parse(input)
+            } catch (e: Exception) {}
+        }
+        return null
+    }
+
     private fun sanitize(s: String?): String {
         val str = s ?: ""
         if (str.startsWith("=") || str.startsWith("+") || str.startsWith("-") || str.startsWith("@")) return "'$str"
@@ -2203,5 +2761,7 @@ object DataParser {
     }
     fun productToRow(p: Product) = listOf(p.id, p.name, p.brand, p.category, p.unit, p.size.toString(), p.cost.toString(), p.lastBoughtStore, p.markupType, p.markupValue.toString(), p.price.toString(), p.stock.toString(), p.threshold.toString(), p.date.ifBlank { SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date()) }, p.idealStock.toString()).map { sanitize(it) }
     fun eventToRow(e: Event) = listOf(e.dateCreated, e.details, e.amount.toString(), e.createdBy, e.editedBy, e.editedDate).map { sanitize(it) }
+    fun customerToRow(c: Customer) = listOf(c.id, c.name, c.nicknames, c.totalOutstanding.toString(), c.lastTransactionDate, c.dateCreated).map { sanitize(it) }
+    fun utangToRow(t: UtangTransaction) = listOf(t.id, t.customerId, t.customerName, t.type, t.amount.toString(), t.itemsSummary, t.date.ifBlank { SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date()) }, t.recordedBy, t.notes).map { sanitize(it) }
     fun priceRecordToRow(ph: PriceRecord) = listOf(ph.productId, ph.productName, ph.store, ph.cost.toString(), ph.date).map { sanitize(it) }
 }

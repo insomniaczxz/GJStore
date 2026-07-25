@@ -8,5 +8,6 @@ data class DropdownSettings(
     val categories: SnapshotStateList<String> = mutableStateListOf(),
     val units: SnapshotStateList<String> = mutableStateListOf(),
     val stores: SnapshotStateList<String> = mutableStateListOf(),
-    val messengerKeys: SnapshotStateList<String> = mutableStateListOf()
+    val messengerKeys: SnapshotStateList<String> = mutableStateListOf(),
+    val employees: SnapshotStateList<String> = mutableStateListOf()
 )
