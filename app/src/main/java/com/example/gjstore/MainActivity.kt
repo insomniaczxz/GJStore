@@ -2132,8 +2132,10 @@ fun AddCustomerDialog(
     var recordedBy by remember { mutableStateOf("") }
     var selectedItems = remember { mutableStateListOf<Pair<Product, Int>>() }
     var showProductPicker by remember { mutableStateOf(false) }
+    val manualItems = remember { mutableStateListOf<Pair<String, String>>().apply { if (isEmpty()) add("" to "") } } // Name to Price
 
-    val totalAmount = selectedItems.sumOf { it.first.price * it.second }
+    val totalAmount = selectedItems.sumOf { it.first.price * it.second } + 
+                      manualItems.sumOf { it.second.toDoubleOrNull() ?: 0.0 }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -2159,13 +2161,27 @@ fun AddCustomerDialog(
                                 Text("Lacking", style = MaterialTheme.typography.bodySmall)
                             }
                             
-                            Text("Items", style = MaterialTheme.typography.labelSmall)
                             selectedItems.forEach { (p, q) ->
                                 Text("• ${p.name} x$q (₱${String.format("%,.2f", p.price * q)})", style = MaterialTheme.typography.bodySmall)
                             }
-                            
+
                             Button(onClick = { showProductPicker = true }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF7D1E).copy(alpha = 0.8f))) {
-                                Text("Add Item", fontSize = 12.sp, color = Color.White)
+                                Icon(Icons.Default.Add, null, tint = Color.White); Spacer(Modifier.width(8.dp)); Text("Add Item", fontSize = 12.sp, color = Color.White)
+                            }
+                            
+                            HorizontalDivider(thickness = 0.5.dp, color = Color.Gray.copy(alpha = 0.2f))
+                            
+                            manualItems.forEachIndexed { index, item ->
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    OutlinedTextField(value = item.first, onValueChange = { manualItems[index] = it to item.second }, label = { Text("Item Name", fontSize = 10.sp) }, modifier = Modifier.weight(1f), singleLine = true)
+                                    OutlinedTextField(value = item.second, onValueChange = { manualItems[index] = item.first to it }, label = { Text("Price", fontSize = 10.sp) }, modifier = Modifier.width(80.dp), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                                    Row {
+                                        IconButton(onClick = { manualItems.add("" to "") }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Add, null, tint = Color(0xFFFF7D1E)) }
+                                        if (manualItems.size > 1) {
+                                            IconButton(onClick = { manualItems.removeAt(index) }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Remove, null, tint = Color.Red) }
+                                        }
+                                    }
+                                }
                             }
                             
                             Text("Total: ₱${String.format("%,.2f", totalAmount)}", fontWeight = FontWeight.Bold, color = Color(0xFFFF7D1E))
@@ -2181,10 +2197,15 @@ fun AddCustomerDialog(
                 onClick = { 
                     if (name.isNotBlank()) {
                         val trans = if (includeInitialCredit && recordedBy.isNotBlank() && totalAmount > 0) {
+                            val dbItemsStr = selectedItems.joinToString(", ") { "${it.first.name} x${it.second}" }
+                            val manualItemsStr = manualItems.filter { it.first.isNotBlank() }.joinToString(", ") { "${it.first}: ₱${it.second}" }
+                            
+                            val summary = listOf(dbItemsStr, manualItemsStr).filter { it.isNotBlank() }.joinToString(", ")
+                            
                             UtangTransaction(
                                 type = type,
                                 amount = totalAmount,
-                                itemsSummary = selectedItems.joinToString(", ") { "${it.first.name} x${it.second}" },
+                                itemsSummary = summary,
                                 recordedBy = recordedBy,
                                 notes = notes
                             )
@@ -2221,11 +2242,13 @@ fun AddTransactionDialog(
     var recordedBy by remember { mutableStateOf("") }
     var selectedItems = remember { mutableStateListOf<Pair<Product, Int>>() }
     var showProductPicker by remember { mutableStateOf(false) }
+    val manualItems = remember { mutableStateListOf<Pair<String, String>>().apply { if (isEmpty()) add("" to "") } }
 
     val totalAmount = if (type == "Payment") {
         amount.toDoubleOrNull() ?: 0.0
     } else {
-        selectedItems.sumOf { it.first.price * it.second }
+        selectedItems.sumOf { it.first.price * it.second } + 
+        manualItems.sumOf { it.second.toDoubleOrNull() ?: 0.0 }
     }
 
     AlertDialog(
@@ -2249,9 +2272,26 @@ fun AddTransactionDialog(
                             Text("₱${String.format("%,.2f", product.price * qty)}")
                         }
                     }
+
                     Button(onClick = { showProductPicker = true }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF7D1E).copy(alpha = 0.8f))) {
                         Icon(Icons.Default.Add, null, tint = Color.White); Spacer(Modifier.width(8.dp)); Text("Add Item", color = Color.White)
                     }
+
+                    HorizontalDivider(thickness = 0.5.dp, color = Color.Gray.copy(alpha = 0.2f))
+
+                    manualItems.forEachIndexed { index, item ->
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            OutlinedTextField(value = item.first, onValueChange = { manualItems[index] = it to item.second }, label = { Text("Item Name", fontSize = 10.sp) }, modifier = Modifier.weight(1f), singleLine = true)
+                            OutlinedTextField(value = item.second, onValueChange = { manualItems[index] = item.first to it }, label = { Text("₱", fontSize = 10.sp) }, modifier = Modifier.width(80.dp), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                            Row {
+                                IconButton(onClick = { manualItems.add("" to "") }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Add, null, tint = Color(0xFFFF7D1E)) }
+                                if (manualItems.size > 1) {
+                                    IconButton(onClick = { manualItems.removeAt(index) }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Remove, null, tint = Color.Red) }
+                                }
+                            }
+                        }
+                    }
+
                     HorizontalDivider()
                     Text("Total: ₱${String.format("%,.2f", totalAmount)}", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge, color = Color(0xFFFF7D1E))
                 } else {
@@ -2275,7 +2315,15 @@ fun AddTransactionDialog(
             Button(
                 onClick = {
                     val finalAmount = if (type == "Payment") amount.toDoubleOrNull() ?: 0.0 else totalAmount
-                    val summary = if (type != "Payment") selectedItems.joinToString(", ") { "${it.first.name} x${it.second}" } else "Payment"
+                    val dbItemsStr = selectedItems.joinToString(", ") { "${it.first.name} x${it.second}" }
+                    val manualItemsStr = manualItems.filter { it.first.isNotBlank() }.joinToString(", ") { "${it.first}: ₱${it.second}" }
+                    
+                    val summary = if (type == "Payment") {
+                        "Payment"
+                    } else {
+                        listOf(dbItemsStr, manualItemsStr).filter { it.isNotBlank() }.joinToString(", ")
+                    }
+
                     onSave(UtangTransaction(
                         id = UUID.randomUUID().toString(),
                         customerId = customer.id,
