@@ -27,7 +27,6 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -211,7 +210,7 @@ fun MainAppScreen() {
     fun performAction(action: PendingAction) {
         coroutineScope.launch(Dispatchers.IO) {
             try {
-                val body = mutableMapOf<String, Any>("sheetName" to action.sheetName, "action" to action.action, "data" to action.data)
+                val body = mutableMapOf("sheetName" to action.sheetName, "action" to action.action, "data" to action.data)
                 if (action.oldData != null) body["oldData"] = action.oldData
                 val response = RetrofitClient.apiService.modifySheet(body)
                 
@@ -425,7 +424,7 @@ fun MainAppScreen() {
                                     Toast.makeText(context, "Stocks Updated", Toast.LENGTH_SHORT).show()
                                 }
                             )
-                            1 -> EventsTab(eventsList, isEventsLoading, { coroutineScope.launch { refreshData() } })
+                            1 -> EventsTab(eventsList, isEventsLoading) { coroutineScope.launch { refreshData() } }
                             2 -> UtangTab(
                                 customersList,
                                 utangTransactionsList,
@@ -451,7 +450,6 @@ fun MainAppScreen() {
                             productsVersion,
                             dynamicSettings, 
                             eventsList, 
-                            priceRecords,
                             priceRecordsMap,
                             isLoading, 
                             currentAdminTab,
@@ -607,7 +605,7 @@ fun PinLockScreen(correctPin: String, onCorrectPin: () -> Unit) {
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Surface(
-                        shape = androidx.compose.foundation.shape.CircleShape,
+                        shape = CircleShape,
                         color = Color(0xFFFF7D1E).copy(alpha = 0.1f),
                         modifier = Modifier.size(80.dp)
                     ) {
@@ -678,7 +676,7 @@ fun PinLockScreen(correctPin: String, onCorrectPin: () -> Unit) {
                 verticalArrangement = Arrangement.Center
             ) {
                 Surface(
-                    shape = androidx.compose.foundation.shape.CircleShape,
+                    shape = CircleShape,
                     color = Color(0xFFFF7D1E).copy(alpha = 0.1f),
                     modifier = Modifier.size(80.dp)
                 ) {
@@ -912,7 +910,7 @@ fun ProductCard(product: Product, isBatchMode: Boolean, batchChanges: MutableMap
                     color = Color.Gray
                 )
                 if (!isBatchMode) {
-                    // Stock info removed from normal view but tap function remains on the card
+                    // Tap on card updates stock
                 }
             }
             
@@ -989,7 +987,6 @@ fun AdminDashboard(
     productsVersion: Int,
     settings: DropdownSettings, 
     eventsList: MutableList<Event>, 
-    priceRecords: List<PriceRecord>,
     priceRecordsMap: Map<String, List<PriceRecord>>,
     isLoading: Boolean, 
     currentAdminTab: Int,
@@ -1636,7 +1633,6 @@ fun DropdownSettingsManager(settings: DropdownSettings, onAction: (String, Strin
     var subTab by remember { mutableIntStateOf(0) }
     val sections = listOf("Brands", "Categories", "Units", "Stores", "Messenger", "Employees", "Security")
     var input by remember { mutableStateOf("") }; var editIdx by remember { mutableIntStateOf(-1) }; var oldVal by remember { mutableStateOf("") }
-    val scope = rememberCoroutineScope(); val context = LocalContext.current
     
     Column(modifier = Modifier.fillMaxSize()) {
         Surface(tonalElevation = 2.dp) {
@@ -2233,7 +2229,7 @@ fun AddCustomerDialog(
     var type by remember { mutableStateOf("Credit") }
     var notes by remember { mutableStateOf("") }
     var recordedBy by remember { mutableStateOf("") }
-    var selectedItems = remember { mutableStateListOf<Pair<Product, Int>>() }
+    val selectedItems = remember { mutableStateListOf<Pair<Product, Int>>() }
     var showProductPicker by remember { mutableStateOf(false) }
     val manualItems = remember { mutableStateListOf<Pair<String, String>>().apply { if (isEmpty()) add("" to "") } } // Name to Price
 
@@ -2344,7 +2340,7 @@ fun AddTransactionDialog(
     var amount by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
     var recordedBy by remember { mutableStateOf("") }
-    var selectedItems = remember { mutableStateListOf<Pair<Product, Int>>() }
+    val selectedItems = remember { mutableStateListOf<Pair<Product, Int>>() }
     var showProductPicker by remember { mutableStateOf(false) }
     val manualItems = remember { mutableStateListOf<Pair<String, String>>().apply { if (isEmpty()) add("" to "") } }
 
@@ -2726,8 +2722,8 @@ fun EventEntryDialog(event: Event? = null, settings: DropdownSettings, onDismiss
     var isSaving by remember { mutableStateOf(false) }
     var details by remember { mutableStateOf(event?.details ?: "") }
     var amount by remember { mutableStateOf(event?.amount?.toString() ?: "") }
-    var person by remember { mutableStateOf(if (event == null) "" else if (event.editedBy.isNotBlank()) event.editedBy else event.createdBy) }
-    val dateDisplay = if (event == null) SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date()) else event.dateCreated
+    var person by remember { mutableStateOf(event?.let { if (it.editedBy.isNotBlank()) it.editedBy else it.createdBy } ?: "") }
+    val dateDisplay = event?.dateCreated ?: SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
 
     BasicAlertDialog(onDismissRequest = onDismiss) {
         Surface(
