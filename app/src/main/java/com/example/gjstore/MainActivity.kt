@@ -95,7 +95,7 @@ fun MainAppScreen() {
     val employeeTabs = listOf("Search", "Events", "Utang", "Basiyo")
     
     var currentAdminTab by remember { mutableIntStateOf(0) }
-    val adminTabs = listOf("Products", "Rebuy", "Settings", "Events")
+    val adminTabs = listOf("Products", "Rebuy", "Utang", "Settings", "Events")
 
     var editingProduct by remember { mutableStateOf<Product?>(null) }
     var editingEvent by remember { mutableStateOf<Event?>(null) }
@@ -338,16 +338,17 @@ fun MainAppScreen() {
                             }
                         )
                         if (isAdminLoggedIn) {
-                            SecondaryTabRow(
+                            ScrollableTabRow(
                                 selectedTabIndex = currentAdminTab,
                                 containerColor = Color.Transparent,
+                                edgePadding = 0.dp,
                                 divider = {}
                             ) {
                                 adminTabs.forEachIndexed { i, t ->
                                     Tab(
                                         selected = currentAdminTab == i,
                                         onClick = { currentAdminTab = i },
-                                        text = { Text(t, style = MaterialTheme.typography.labelLarge) }
+                                        text = { Text(t, style = MaterialTheme.typography.labelLarge, softWrap = false, maxLines = 1) }
                                     )
                                 }
                             }
@@ -361,7 +362,7 @@ fun MainAppScreen() {
                                     Tab(
                                         selected = selectedEmployeeTab == i,
                                         onClick = { selectedEmployeeTab = i },
-                                        text = { Text(t, style = MaterialTheme.typography.labelLarge) }
+                                        text = { Text(t, style = MaterialTheme.typography.labelLarge, softWrap = false, maxLines = 1) }
                                     )
                                 }
                             }
@@ -430,6 +431,7 @@ fun MainAppScreen() {
                                 utangTransactionsList,
                                 dynamicSettings,
                                 productsList,
+                                isAdminLoggedIn,
                                 onAction = { action ->
                                     pendingQueue.add(action)
                                     performAction(action)
@@ -452,7 +454,9 @@ fun MainAppScreen() {
                             priceRecords,
                             priceRecordsMap,
                             isLoading, 
-                            currentAdminTab, 
+                            currentAdminTab,
+                            customersList,
+                            utangTransactionsList,
                             { coroutineScope.launch { refreshData() } },
                             { target, action ->
                                 val data = DataParser.productToRow(target)
@@ -503,7 +507,16 @@ fun MainAppScreen() {
                                 coroutineScope.launch { refreshData() }
                             },
                             isPinEnabled,
-                            { isPinEnabled = it }
+                            { isPinEnabled = it },
+                            onUtangAction = { action ->
+                                pendingQueue.add(action)
+                                performAction(action)
+                                coroutineScope.launch(Dispatchers.IO) { 
+                                    CacheManager.saveQueue(context, pendingQueue.toList())
+                                    CacheManager.saveCustomers(context, customersList.toList())
+                                    CacheManager.saveUtangTransactions(context, utangTransactionsList.toList())
+                                }
+                            }
                         )
                     }
                 }
@@ -979,7 +992,9 @@ fun AdminDashboard(
     priceRecords: List<PriceRecord>,
     priceRecordsMap: Map<String, List<PriceRecord>>,
     isLoading: Boolean, 
-    currentAdminTab: Int, 
+    currentAdminTab: Int,
+    customers: SnapshotStateList<Customer>,
+    utangTransactions: SnapshotStateList<UtangTransaction>,
     onRefresh: () -> Unit,
     onUpdateSheet: (Product, String) -> Unit, 
     onBatchUpdate: (List<Product>) -> Unit,
@@ -988,14 +1003,16 @@ fun AdminDashboard(
     onDeleteEvent: (Event) -> Unit, 
     onSettingsAction: (String, String, List<String?>, List<String?>?) -> Unit,
     isPinEnabled: Boolean,
-    onPinEnabledChange: (Boolean) -> Unit
+    onPinEnabledChange: (Boolean) -> Unit,
+    onUtangAction: (PendingAction) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         when (currentAdminTab) {
             0 -> AdminProductList(products, productsVersion, priceRecordsMap, isLoading, onRefresh, onEditProductRequested, { p -> products.remove(p); onUpdateSheet(p, "delete") }, onBatchUpdate)
             1 -> ShouldRebuyScreen(products, priceRecordsMap)
-            2 -> DropdownSettingsManager(settings, onSettingsAction, isPinEnabled, onPinEnabledChange)
-            3 -> AdminEventsScreen(eventsList, isLoading, onRefresh, onEditEventRequested, onDeleteEvent)
+            2 -> UtangTab(customers, utangTransactions, settings, products, true, onUtangAction, onRefresh)
+            3 -> DropdownSettingsManager(settings, onSettingsAction, isPinEnabled, onPinEnabledChange)
+            4 -> AdminEventsScreen(eventsList, isLoading, onRefresh, onEditEventRequested, onDeleteEvent)
         }
     }
 }
@@ -1900,6 +1917,7 @@ fun UtangTab(
     transactions: SnapshotStateList<UtangTransaction>,
     settings: DropdownSettings,
     products: List<Product>,
+    isAdmin: Boolean,
     onAction: (PendingAction) -> Unit,
     refreshData: () -> Unit
 ) {
@@ -1907,6 +1925,9 @@ fun UtangTab(
     var selectedFilter by remember { mutableIntStateOf(0) } // 0: Active, 1: All, 2: > 1 Month, 3: > 1 Year
     var showAddCustomerDialog by remember { mutableStateOf(false) }
     var selectedCustomer by remember { mutableStateOf<Customer?>(null) }
+    var editingCustomer by remember { mutableStateOf<Customer?>(null) }
+    var customerToDelete by remember { mutableStateOf<Customer?>(null) }
+    var transactionToDelete by remember { mutableStateOf<UtangTransaction?>(null) }
     var showTransactionDialog by remember { mutableStateOf<Pair<Customer, String>?>(null) } // Customer to Type ("Credit", "Kuwang", "Payment")
 
     val totalOutstanding = remember(customers.size, customers.sumOf { it.totalOutstanding }) { customers.sumOf { it.totalOutstanding } }
@@ -2003,53 +2024,125 @@ fun UtangTab(
             ) {
                 items(filteredCustomers) { customer ->
                     CustomerCard(
-                        customer,
+                        customer = customer,
+                        isAdmin = isAdmin,
                         onClick = { selectedCustomer = customer },
                         onPay = { showTransactionDialog = customer to "Payment" },
-                        onCredit = { showTransactionDialog = customer to "Credit" }
+                        onCredit = { showTransactionDialog = customer to "Credit" },
+                        onEdit = { editingCustomer = customer },
+                        onDelete = { customerToDelete = customer }
                     )
                 }
             }
         }
     }
 
-    if (showAddCustomerDialog) {
+    if (showAddCustomerDialog || editingCustomer != null) {
         AddCustomerDialog(
             products = products,
             settings = settings,
-            onDismiss = { showAddCustomerDialog = false },
-            onSave = { name, nicknames, initialTransaction ->
-                val customerId = UUID.randomUUID().toString()
-                val dateStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date())
-                val newCustomer = Customer(
-                    id = customerId,
-                    name = name,
-                    nicknames = nicknames,
-                    dateCreated = dateStr,
-                    lastTransactionDate = dateStr,
-                    totalOutstanding = initialTransaction?.amount ?: 0.0
-                )
-                
-                // Optimistic Local Update
-                customers.add(newCustomer)
-                onAction(PendingAction("Customers", "add", DataParser.customerToRow(newCustomer)))
-                
-                initialTransaction?.let { trans ->
-                    val finalTrans = trans.copy(id = UUID.randomUUID().toString(), customerId = customerId, customerName = name, date = dateStr)
-                    transactions.add(0, finalTrans)
-                    onAction(PendingAction("UtangTransactions", "add", DataParser.utangToRow(finalTrans)))
+            initialCustomer = editingCustomer,
+            onDismiss = { showAddCustomerDialog = false; editingCustomer = null },
+            onSave = { name, nicknames, initialTransaction, isEdit ->
+                if (isEdit && editingCustomer != null) {
+                    val updated = editingCustomer!!.copy(name = name, nicknames = nicknames)
+                    val idx = customers.indexOfFirst { it.id == updated.id }
+                    if (idx != -1) customers[idx] = updated
+                    onAction(PendingAction("Customers", "update", DataParser.customerToRow(updated)))
+                } else {
+                    val customerId = UUID.randomUUID().toString()
+                    val dateStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date())
+                    val newCustomer = Customer(
+                        id = customerId,
+                        name = name,
+                        nicknames = nicknames,
+                        dateCreated = dateStr,
+                        lastTransactionDate = dateStr,
+                        totalOutstanding = initialTransaction?.amount ?: 0.0
+                    )
+                    customers.add(newCustomer)
+                    onAction(PendingAction("Customers", "add", DataParser.customerToRow(newCustomer)))
+                    initialTransaction?.let { trans ->
+                        val finalTrans = trans.copy(id = UUID.randomUUID().toString(), customerId = customerId, customerName = name, date = dateStr)
+                        transactions.add(0, finalTrans)
+                        onAction(PendingAction("UtangTransactions", "add", DataParser.utangToRow(finalTrans)))
+                    }
                 }
-                
-                showAddCustomerDialog = false
+                showAddCustomerDialog = false; editingCustomer = null
             }
+        )
+    }
+
+    if (customerToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { customerToDelete = null },
+            title = { Text("Delete Customer?") },
+            text = { Text("This will permanently delete ${customerToDelete!!.name} and ALL their transaction history. This cannot be undone.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onAction(PendingAction("Customers", "delete", DataParser.customerToRow(customerToDelete!!)))
+                        // Also delete transactions in background (Script side could handle this but we queue it for safety)
+                        val transToDelete = transactions.filter { it.customerId == customerToDelete!!.id }
+                        transToDelete.forEach { onAction(PendingAction("UtangTransactions", "delete", DataParser.utangToRow(it))) }
+                        
+                        customers.remove(customerToDelete)
+                        transactions.removeAll { it.customerId == customerToDelete!!.id }
+                        customerToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                ) { Text("Delete Everything") }
+            },
+            dismissButton = { TextButton(onClick = { customerToDelete = null }) { Text("Cancel") } }
         )
     }
 
     selectedCustomer?.let { customer ->
         CustomerDetailDialog(
-            customer,
-            transactions.filter { it.customerId == customer.id },
-            onDismiss = { selectedCustomer = null }
+            customer = customer,
+            transactions = transactions.filter { it.customerId == customer.id },
+            isAdmin = isAdmin,
+            onDismiss = { selectedCustomer = null },
+            onDeleteTransaction = { trans -> transactionToDelete = trans }
+        )
+    }
+
+    if (transactionToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { transactionToDelete = null },
+            title = { Text("Delete Transaction?") },
+            text = { Text("Delete ${transactionToDelete!!.type}: ₱${transactionToDelete!!.amount}? This will automatically adjust the customer's balance.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val trans = transactionToDelete!!
+                        onAction(PendingAction("UtangTransactions", "delete", DataParser.utangToRow(trans)))
+                        
+                        // Local adjustment
+                        transactions.remove(trans)
+                        val idx = customers.indexOfFirst { it.id == trans.customerId }
+                        if (idx != -1) {
+                            val old = customers[idx]
+                            val adj = if (trans.type == "Payment") trans.amount else -trans.amount
+                            
+                            // Find new latest transaction date
+                            val remainingTrans = transactions.filter { it.customerId == trans.customerId }
+                            val newLatestDate = remainingTrans.mapNotNull { DataParser.parseAnyDate(it.date) }
+                                .maxOrNull()?.let { 
+                                    SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(it)
+                                } ?: old.dateCreated // Fallback to creation date if no transactions left
+                            
+                            customers[idx] = old.copy(
+                                totalOutstanding = old.totalOutstanding + adj,
+                                lastTransactionDate = newLatestDate
+                            )
+                        }
+                        transactionToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                ) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { transactionToDelete = null }) { Text("Cancel") } }
         )
     }
 
@@ -2081,7 +2174,7 @@ fun UtangTab(
 }
 
 @Composable
-fun CustomerCard(customer: Customer, onClick: () -> Unit, onPay: () -> Unit, onCredit: () -> Unit) {
+fun CustomerCard(customer: Customer, isAdmin: Boolean, onClick: () -> Unit, onPay: () -> Unit, onCredit: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable { onClick() },
         colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
@@ -2103,7 +2196,16 @@ fun CustomerCard(customer: Customer, onClick: () -> Unit, onPay: () -> Unit, onC
                     fontWeight = FontWeight.Bold
                 )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (isAdmin) {
+                    IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.Edit, "Edit CX", tint = Color.Gray, modifier = Modifier.size(20.dp))
+                    }
+                    IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.Delete, "Delete CX", tint = Color.Red.copy(alpha = 0.6f), modifier = Modifier.size(20.dp))
+                    }
+                    Spacer(Modifier.width(4.dp))
+                }
                 IconButton(onClick = onCredit, modifier = Modifier.background(Color(0xFFFF7D1E).copy(alpha = 0.1f), CircleShape)) {
                     Icon(Icons.Default.Add, "Add Credit", tint = Color(0xFFFF7D1E))
                 }
@@ -2119,11 +2221,12 @@ fun CustomerCard(customer: Customer, onClick: () -> Unit, onPay: () -> Unit, onC
 fun AddCustomerDialog(
     products: List<Product>,
     settings: DropdownSettings,
+    initialCustomer: Customer? = null,
     onDismiss: () -> Unit, 
-    onSave: (String, String, UtangTransaction?) -> Unit
+    onSave: (String, String, UtangTransaction?, Boolean) -> Unit
 ) {
-    var name by remember { mutableStateOf("") }
-    var nicknames by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf(initialCustomer?.name ?: "") }
+    var nicknames by remember { mutableStateOf(initialCustomer?.nicknames ?: "") }
     var includeInitialCredit by remember { mutableStateOf(false) }
     
     // Transaction fields
@@ -2196,7 +2299,8 @@ fun AddCustomerDialog(
             Button(
                 onClick = { 
                     if (name.isNotBlank()) {
-                        val trans = if (includeInitialCredit && recordedBy.isNotBlank() && totalAmount > 0) {
+                        val isEdit = initialCustomer != null
+                        val trans = if (!isEdit && includeInitialCredit && recordedBy.isNotBlank() && totalAmount > 0) {
                             val dbItemsStr = selectedItems.joinToString(", ") { "${it.first.name} x${it.second}" }
                             val manualItemsStr = manualItems.filter { it.first.isNotBlank() }.joinToString(", ") { "${it.first}: ₱${it.second}" }
                             
@@ -2210,10 +2314,10 @@ fun AddCustomerDialog(
                                 notes = notes
                             )
                         } else null
-                        onSave(name, nicknames, trans)
+                        onSave(name, nicknames, trans, isEdit)
                     }
                 }, 
-                enabled = name.isNotBlank() && (!includeInitialCredit || (recordedBy.isNotBlank() && totalAmount > 0))
+                enabled = name.isNotBlank() && (initialCustomer != null || !includeInitialCredit || (recordedBy.isNotBlank() && totalAmount > 0))
             ) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
@@ -2395,7 +2499,7 @@ fun ProductPickerList(products: List<Product>, onSelect: (Product, Int) -> Unit,
 }
 
 @Composable
-fun CustomerDetailDialog(customer: Customer, transactions: List<UtangTransaction>, onDismiss: () -> Unit) {
+fun CustomerDetailDialog(customer: Customer, transactions: List<UtangTransaction>, isAdmin: Boolean, onDismiss: () -> Unit, onDeleteTransaction: (UtangTransaction) -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("${customer.name}'s History") },
@@ -2405,8 +2509,15 @@ fun CustomerDetailDialog(customer: Customer, transactions: List<UtangTransaction
                     items(transactions) { t ->
                         Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF2C2C2C))) {
                             Column(modifier = Modifier.padding(12.dp).fillMaxWidth()) {
-                                Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                                    Text(t.type, fontWeight = FontWeight.Bold, color = if (t.type == "Payment") Color.Green else Color(0xFFFF7D1E))
+                                Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(t.type, fontWeight = FontWeight.Bold, color = if (t.type == "Payment") Color.Green else Color(0xFFFF7D1E))
+                                        if (isAdmin) {
+                                            IconButton(onClick = { onDeleteTransaction(t) }, modifier = Modifier.size(24.dp).padding(start = 8.dp)) {
+                                                Icon(Icons.Default.Delete, "Delete Trans", tint = Color.Red.copy(alpha = 0.5f), modifier = Modifier.size(16.dp))
+                                            }
+                                        }
+                                    }
                                     Text(t.date, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                                 }
                                 Text("Amount: ₱${String.format("%,.2f", t.amount)}", style = MaterialTheme.typography.titleSmall)
