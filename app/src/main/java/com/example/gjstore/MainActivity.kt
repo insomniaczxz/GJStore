@@ -90,11 +90,11 @@ fun MainAppScreen() {
     var showLoginDialog by remember { mutableStateOf(false) }
     var showEventDialog by remember { mutableStateOf(false) }
     
-    var selectedEmployeeTab by remember { mutableIntStateOf(0) }
-    val employeeTabs = listOf("Search", "Events", "Utang", "Basiyo")
+    var selectedEmployeeTab by remember { mutableStateOf(0) }
+    val employeeTabs = listOf("Search", "Events", "Utang", "Info")
     
-    var currentAdminTab by remember { mutableIntStateOf(0) }
-    val adminTabs = listOf("Products", "Rebuy", "Utang", "Settings", "Events")
+    var currentAdminTab by remember { mutableStateOf(0) }
+    val adminTabs = listOf("Products", "Rebuy", "Utang", "Info", "Settings", "Events")
 
     var editingProduct by remember { mutableStateOf<Product?>(null) }
     var editingEvent by remember { mutableStateOf<Event?>(null) }
@@ -207,32 +207,34 @@ fun MainAppScreen() {
         }
     }
 
-    fun performAction(action: PendingAction) {
-        coroutineScope.launch(Dispatchers.IO) {
+    // Sequential Queue Processor
+    var isSyncing by remember { mutableStateOf(false) }
+    LaunchedEffect(pendingQueue.size) {
+        if (!isSyncing && pendingQueue.isNotEmpty()) {
+            isSyncing = true
+            val action = pendingQueue.first()
             try {
                 val body = mutableMapOf("sheetName" to action.sheetName, "action" to action.action, "data" to action.data)
                 if (action.oldData != null) body["oldData"] = action.oldData
                 val response = RetrofitClient.apiService.modifySheet(body)
                 
-                // Read response body safely
                 val respStr = if (response.isSuccessful || response.code() == 302) {
                     response.body()?.string()?.lowercase() ?: ""
-                } else {
-                    ""
-                }
+                } else ""
 
                 if (respStr.contains("success")) {
-                    withContext(Dispatchers.Main) {
-                        pendingQueue.remove(action)
-                    }
+                    pendingQueue.removeAt(0)
                     CacheManager.saveQueue(context, pendingQueue.toList())
                 } else if (respStr.contains("error")) {
-                    withContext(Dispatchers.Main) { 
-                        Toast.makeText(context, "Sync Error for ${action.sheetName}", Toast.LENGTH_SHORT).show() 
-                    }
+                    pendingQueue.removeAt(0)
+                    CacheManager.saveQueue(context, pendingQueue.toList())
+                } else {
+                    delay(5000) // Wait and retry same item
                 }
-            } catch (e: Exception) { 
-                // Keep in queue for next retry later
+            } catch (e: Exception) {
+                delay(5000)
+            } finally {
+                isSyncing = false
             }
         }
     }
@@ -262,9 +264,6 @@ fun MainAppScreen() {
                         dynamicSettings.stores.clear(); dynamicSettings.stores.addAll(it.stores)
                         dynamicSettings.messengerKeys.clear(); dynamicSettings.messengerKeys.addAll(it.messengerKeys)
                         dynamicSettings.employees.clear(); dynamicSettings.employees.addAll(it.employees)
-                    }
-                    coroutineScope.launch(Dispatchers.IO) {
-                        pendingQueue.toList().forEach { performAction(it) }
                     }
                 }
             }
@@ -405,7 +404,7 @@ fun MainAppScreen() {
                                         productsList[idx] = updated
                                         productsVersion++
                                         val act = PendingAction("Products", "update", DataParser.productToRow(updated))
-                                        pendingQueue.add(act); performAction(act)
+                                        pendingQueue.add(act)
                                         coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
                                         Toast.makeText(context, "Stock Updated", Toast.LENGTH_SHORT).show()
                                     }
@@ -416,7 +415,7 @@ fun MainAppScreen() {
                                         if (idx != -1) {
                                             productsList[idx] = updated
                                             val act = PendingAction("Products", "update", DataParser.productToRow(updated))
-                                            pendingQueue.add(act); performAction(act)
+                                            pendingQueue.add(act)
                                         }
                                     }
                                     productsVersion++
@@ -433,7 +432,6 @@ fun MainAppScreen() {
                                 isAdminLoggedIn,
                                 onAction = { action ->
                                     pendingQueue.add(action)
-                                    performAction(action)
                                     coroutineScope.launch(Dispatchers.IO) { 
                                         CacheManager.saveQueue(context, pendingQueue.toList())
                                         CacheManager.saveCustomers(context, customersList.toList())
@@ -442,7 +440,7 @@ fun MainAppScreen() {
                                 },
                                 refreshData = { coroutineScope.launch { refreshData() } }
                             )
-                            3 -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Basiyo - Coming Soon", color = Color.Gray) }
+                            3 -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Info Hub - Coming Soon", color = Color.Gray) }
                         }
                     } else {
                         AdminDashboard(
@@ -459,7 +457,7 @@ fun MainAppScreen() {
                             { target, action ->
                                 val data = DataParser.productToRow(target)
                                 val act = PendingAction("Products", action, data)
-                                pendingQueue.add(act); performAction(act)
+                                pendingQueue.add(act)
                                 productsVersion++
                                 coroutineScope.launch(Dispatchers.IO) { CacheManager.saveProducts(context, productsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
                                 Toast.makeText(context, "Product ${action.replaceFirstChar { it.uppercase() }}d", Toast.LENGTH_SHORT).show()
@@ -470,7 +468,7 @@ fun MainAppScreen() {
                                     if (idx != -1) {
                                         productsList[idx] = updated
                                         val act = PendingAction("Products", "update", DataParser.productToRow(updated))
-                                        pendingQueue.add(act); performAction(act)
+                                        pendingQueue.add(act)
                                     }
                                 }
                                 productsVersion++
@@ -483,7 +481,7 @@ fun MainAppScreen() {
                                 eventsList.remove(event)
                                 val data = DataParser.eventToRow(event)
                                 val act = PendingAction("Events", "delete", data, data)
-                                pendingQueue.add(act); performAction(act)
+                                pendingQueue.add(act)
                                 coroutineScope.launch(Dispatchers.IO) { CacheManager.saveEvents(context, eventsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
                                 Toast.makeText(context, "Event Deleted", Toast.LENGTH_SHORT).show()
                             }, 
@@ -497,7 +495,7 @@ fun MainAppScreen() {
                                 }
                                 
                                 val act = PendingAction(sheet, action, paddedData, paddedOldData)
-                                pendingQueue.add(act); performAction(act)
+                                pendingQueue.add(act)
                                 coroutineScope.launch(Dispatchers.IO) { CacheManager.saveSettings(context, dynamicSettings); CacheManager.saveQueue(context, pendingQueue.toList()) }
                                 Toast.makeText(context, "Settings updated", Toast.LENGTH_SHORT).show()
                                 
@@ -508,7 +506,6 @@ fun MainAppScreen() {
                             { isPinEnabled = it },
                             onUtangAction = { action ->
                                 pendingQueue.add(action)
-                                performAction(action)
                                 coroutineScope.launch(Dispatchers.IO) { 
                                     CacheManager.saveQueue(context, pendingQueue.toList())
                                     CacheManager.saveCustomers(context, customersList.toList())
@@ -529,7 +526,7 @@ fun MainAppScreen() {
             
             if (editingEvent == null) eventsList.add(0, event) else { val idx = eventsList.indexOf(editingEvent); if (idx != -1) eventsList[idx] = event }
             val act = PendingAction("Events", action, data, oldData)
-            pendingQueue.add(act); performAction(act)
+            pendingQueue.add(act)
             coroutineScope.launch(Dispatchers.IO) { CacheManager.saveEvents(context, eventsList.toList()); CacheManager.saveQueue(context, pendingQueue.toList()) }
             Toast.makeText(context, if (editingEvent == null) "Event Added" else "Event Updated", Toast.LENGTH_SHORT).show()
             showEventDialog = false; editingEvent = null
@@ -542,7 +539,7 @@ fun MainAppScreen() {
                     val ph = PriceRecord(finalized.id, finalized.name, finalized.lastBoughtStore, finalized.cost, SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date()))
                     priceRecords.add(0, ph)
                     val phAct = PendingAction("PriceHistory", "add", DataParser.priceRecordToRow(ph))
-                    pendingQueue.add(phAct); performAction(phAct)
+                    pendingQueue.add(phAct)
                 }
             }
 
@@ -555,7 +552,7 @@ fun MainAppScreen() {
             productsVersion++
             val action = if (isUpdating) "update" else "add"
             val act = PendingAction("Products", action, DataParser.productToRow(finalized))
-            pendingQueue.add(act); performAction(act)
+            pendingQueue.add(act)
 
             val newSettings = listOf(
                 0 to finalized.brand.trim().takeIf { it.isNotBlank() && !dynamicSettings.brands.any { b -> b.equals(it, ignoreCase = true) } },
@@ -574,7 +571,7 @@ fun MainAppScreen() {
                     }
                     val settingsData = MutableList(5) { "" }.apply { set(index, value) }
                     val settingsAct = PendingAction("Settings", "add", settingsData)
-                    pendingQueue.add(settingsAct); performAction(settingsAct)
+                    pendingQueue.add(settingsAct)
                 }
             }
 
@@ -1008,8 +1005,9 @@ fun AdminDashboard(
             0 -> AdminProductList(products, productsVersion, priceRecordsMap, isLoading, onRefresh, onEditProductRequested, { p -> products.remove(p); onUpdateSheet(p, "delete") }, onBatchUpdate)
             1 -> ShouldRebuyScreen(products, priceRecordsMap)
             2 -> UtangTab(customers, utangTransactions, settings, products, true, onUtangAction, onRefresh)
-            3 -> DropdownSettingsManager(settings, onSettingsAction, isPinEnabled, onPinEnabledChange)
-            4 -> AdminEventsScreen(eventsList, isLoading, onRefresh, onEditEventRequested, onDeleteEvent)
+            3 -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Info Hub - Coming Soon", color = Color.Gray) }
+            4 -> DropdownSettingsManager(settings, onSettingsAction, isPinEnabled, onPinEnabledChange)
+            5 -> AdminEventsScreen(eventsList, isLoading, onRefresh, onEditEventRequested, onDeleteEvent)
         }
     }
 }
